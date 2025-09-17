@@ -17,6 +17,7 @@ import time
 import uuid
 import glob
 import queue
+import io
 import ctypes
 import signal
 import random
@@ -29,7 +30,7 @@ import threading
 import subprocess
 from collections import deque, defaultdict, namedtuple
 from dataclasses import dataclass, field
-from typing import Dict, List, Tuple, Optional, Callable, Any
+from typing import Dict, List, Tuple, Optional, Callable, Any, TextIO
 
 import numpy as np
 import cv2
@@ -114,6 +115,43 @@ class AppLogger:
 
 
 log = AppLogger.instance()
+
+
+# Built-in fallback tactics dataset used when an external PGN file is unavailable.
+DEFAULT_TACTICS_PGN = """
+[Event "CHMD Default Tactic 1"]
+[Site "?"]
+[Date "2024.01.01"]
+[Round "-"]
+[White "White to move"]
+[Black "Black"]
+[Result "*"]
+[SetUp "1"]
+[FEN "r2q1rk1/pp2bppp/2n5/3np3/2P5/1PN1PN2/PB1QBPPP/3RR1K1 w - - 0 1"]
+1. Qxd5 Bb4 2. Qxd8 Raxd8 3. Rxd8 Rxd8 4. axb4 *
+
+[Event "CHMD Default Tactic 2"]
+[Site "?"]
+[Date "2024.01.02"]
+[Round "-"]
+[White "White to move"]
+[Black "Black"]
+[Result "*"]
+[SetUp "1"]
+[FEN "4rrk1/pp3ppp/2p2n2/3b4/3P4/2N1PN2/PP3PPP/R2R2K1 w - - 0 1"]
+1. Nxd5 Nxd5 2. e4 Rxe4 3. Re1 *
+
+[Event "CHMD Default Tactic 3"]
+[Site "?"]
+[Date "2024.01.03"]
+[Round "-"]
+[White "White to move"]
+[Black "Black"]
+[Result "*"]
+[SetUp "1"]
+[FEN "r1bq1rk1/ppp2ppp/2n2n2/3Q4/3P4/2N2N2/PPP2PPP/R1B2RK1 w - - 0 1"]
+1. Qxd8 Rxd8 2. Bf4 *
+"""
 
 
 # --------------------------------------------------------------------------------------
@@ -901,6 +939,87 @@ board_detector = BoardDetector()
 # Stockfish engine integration
 # --------------------------------------------------------------------------------------
 
+
+def resolve_stockfish_binary(configured_path: str) -> Tuple[Optional[str], List[str]]:
+    """Resolve a usable Stockfish binary path.
+
+    Returns a tuple with the resolved absolute path (or ``None``) and the list of
+    candidate locations that were inspected while searching."""
+
+    candidate_names = (
+        "stockfish-17.1",
+        "stockfish-17",
+        "stockfish-16",
+        "stockfish",
+        "stockfish_x64",
+        "stockfish_x64_avx2",
+        "stockfish.exe",
+    )
+
+    candidates: List[str] = []
+
+    def add_candidate(path: Optional[str]) -> None:
+        if not path:
+            return
+        if path not in candidates:
+            candidates.append(path)
+
+    add_candidate(os.environ.get("STOCKFISH_BINARY"))
+    add_candidate(configured_path)
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    add_candidate(os.path.join(script_dir, "stockfish"))
+    add_candidate(os.path.join(script_dir, "bin", "stockfish"))
+    add_candidate(os.path.join(script_dir, "engines"))
+    add_candidate(os.path.join(os.path.expanduser("~"), "stockfish"))
+    add_candidate("stockfish-17.1")
+    add_candidate("stockfish-17")
+    add_candidate("stockfish")
+
+    inspected: List[str] = []
+
+    for candidate in candidates:
+        if not candidate:
+            continue
+        expanded = os.path.expanduser(candidate)
+        if os.path.isdir(expanded):
+            for name in candidate_names:
+                nested = os.path.join(expanded, name)
+                inspected.append(os.path.abspath(nested))
+                if os.path.exists(nested) and os.access(nested, os.X_OK):
+                    return os.path.abspath(nested), inspected
+            continue
+
+        if os.path.isabs(expanded) or os.path.sep in expanded:
+            normalized = os.path.abspath(expanded)
+            inspected.append(normalized)
+            if os.path.exists(normalized) and os.access(normalized, os.X_OK):
+                return normalized, inspected
+            if sys.platform.startswith("win") and not normalized.lower().endswith(".exe"):
+                exe_candidate = normalized + ".exe"
+                inspected.append(exe_candidate)
+                if os.path.exists(exe_candidate) and os.access(exe_candidate, os.X_OK):
+                    return exe_candidate, inspected
+            continue
+
+        which_result = shutil.which(expanded)
+        if which_result:
+            resolved = os.path.abspath(which_result)
+            inspected.append(resolved)
+            if os.access(resolved, os.X_OK):
+                return resolved, inspected
+        else:
+            inspected.append(expanded)
+            if sys.platform.startswith("win") and not expanded.lower().endswith(".exe"):
+                win_result = shutil.which(expanded + ".exe")
+                if win_result:
+                    resolved = os.path.abspath(win_result)
+                    inspected.append(resolved)
+                    if os.access(resolved, os.X_OK):
+                        return resolved, inspected
+
+    return None, inspected
+
+
 @dataclass
 class EngineLine:
     depth: int
@@ -925,7 +1044,10 @@ class StockfishEngine:
     """Manage communication with Stockfish engine."""
 
     def __init__(self, path: str) -> None:
-        self.path = path
+        self._path = path
+        self._resolved_path: Optional[str] = None
+        self._last_resolution_attempts: List[str] = []
+        self._start_failure_reported = False
         self.process: Optional[subprocess.Popen] = None
         self.queue: "queue.Queue[str]" = queue.Queue()
         self.listener_thread: Optional[threading.Thread] = None
@@ -948,9 +1070,26 @@ class StockfishEngine:
         with self.lock:
             if self.process and self.process.poll() is None:
                 return
+            binary, inspected = resolve_stockfish_binary(self._path)
+            self._last_resolution_attempts = inspected
+            if not binary:
+                if not self._start_failure_reported:
+                    details = ", ".join(inspected) if inspected else "<no candidates>"
+                    log.error(f"Failed to locate Stockfish executable. Checked: {details}")
+                    event_bus.emit(
+                        "engine_status",
+                        {"available": False, "candidates": inspected},
+                    )
+                    self._start_failure_reported = True
+                self.running = False
+                self.process = None
+                return
+            if binary != self._resolved_path:
+                log.info(f"Using Stockfish binary at {binary}")
+                self._resolved_path = binary
             try:
                 self.process = subprocess.Popen(
-                    [self.path],
+                    [binary],
                     stdin=subprocess.PIPE,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.STDOUT,
@@ -959,6 +1098,7 @@ class StockfishEngine:
                     universal_newlines=True,
                 )
                 self.running = True
+                self._start_failure_reported = False
                 self.listener_thread = threading.Thread(target=self._listen_output, daemon=True)
                 self.listener_thread.start()
                 self._send_command("uci")
@@ -970,6 +1110,13 @@ class StockfishEngine:
             except Exception as exc:
                 log.error(f"Failed to start Stockfish: {exc}")
                 self.running = False
+                self.process = None
+                if not self._start_failure_reported:
+                    event_bus.emit(
+                        "engine_status",
+                        {"available": False, "candidates": self._last_resolution_attempts},
+                    )
+                    self._start_failure_reported = True
 
     def stop(self) -> None:
         with self.lock:
@@ -1122,6 +1269,16 @@ class StockfishEngine:
     def set_callback(self, callback: Callable[[EngineAnalysis], None]) -> None:
         self.analysis_callback = callback
 
+    @property
+    def path(self) -> str:
+        return self._path
+
+    @path.setter
+    def path(self, value: str) -> None:
+        self._path = value
+        self._resolved_path = None
+        self._start_failure_reported = False
+
     def _analysis_loop(self) -> None:
         while True:
             try:
@@ -1132,6 +1289,9 @@ class StockfishEngine:
             self.max_multipv = settings.get("pv_lines", self.max_multipv)
             self.multipv_lines.clear()
             self.start()
+            if not self.running or not self.process:
+                time.sleep(0.25)
+                continue
             self._send_command("stop")
             self._send_command(f"position fen {fen}")
             self._set_option("MultiPV", self.max_multipv)
@@ -1140,7 +1300,7 @@ class StockfishEngine:
                 self._send_command(f"go movetime {int(movetime * 1000)}")
             else:
                 d = depth if depth is not None else self.depth
-                self._send_command(f"go depth {d}")
+            self._send_command(f"go depth {d}")
 
 
 engine = StockfishEngine(settings.get("stockfish_path", "stockfish-17.1"))
@@ -1209,22 +1369,36 @@ class GameModel(QtCore.QObject):
         path = settings.get("tactics_dataset", "tactics.pgn")
         if not os.path.exists(path):
             log.warning(f"Tactics dataset {path} not found")
+            self._load_builtin_tactics()
             return
         try:
-            with open(path, "r", encoding="utf-8") as f:
-                while True:
-                    game = chess.pgn.read_game(f)
-                    if game is None:
-                        break
-                    board = game.board()
-                    moves = []
-                    for move in game.mainline_moves():
-                        board.push(move)
-                        moves.append(move)
-                    self.tactics_puzzles.append((game.board(), moves))
-            log.info(f"Loaded {len(self.tactics_puzzles)} tactics puzzles")
+            with open(path, "r", encoding="utf-8") as stream:
+                self._parse_tactics_stream(stream)
         except Exception as exc:
             log.error(f"Failed to load tactics: {exc}")
+            self._load_builtin_tactics()
+
+    def _parse_tactics_stream(self, stream: TextIO) -> None:
+        count_before = len(self.tactics_puzzles)
+        while True:
+            game = chess.pgn.read_game(stream)
+            if game is None:
+                break
+            board = game.board()
+            moves: List[chess.Move] = []
+            for move in game.mainline_moves():
+                board.push(move)
+                moves.append(move)
+            self.tactics_puzzles.append((game.board(), moves))
+        loaded = len(self.tactics_puzzles) - count_before
+        if loaded:
+            log.info(f"Loaded {loaded} tactics puzzles (total {len(self.tactics_puzzles)})")
+        else:
+            log.warning("No tactics puzzles could be parsed from the provided dataset")
+
+    def _load_builtin_tactics(self) -> None:
+        log.info("Falling back to built-in tactics puzzles")
+        self._parse_tactics_stream(io.StringIO(DEFAULT_TACTICS_PGN))
 
     def start_new_game(self, mode: str, player_color: chess.Color = chess.WHITE) -> None:
         with self.lock:
@@ -2312,18 +2486,26 @@ class MainWindow(QtWidgets.QMainWindow):
         main_layout.addLayout(side_layout, 1)
         self.statusBar().showMessage("Ready")
         self.overlay_window: Optional[OverlayWindow] = None
-        self.analysis_overlay = AnalysisOverlayWindow(self)
+        self.analysis_overlay: Optional[AnalysisOverlayWindow] = None
+        try:
+            self.analysis_overlay = AnalysisOverlayWindow(self)
+        except Exception as exc:
+            log.error(f"Failed to initialize analysis overlay: {exc}")
         self._setup_shortcuts()
         event_bus.subscribe("engine_analysis", self._update_analysis)
-        event_bus.subscribe("engine_analysis", self.analysis_overlay.update_analysis)
+        if self.analysis_overlay:
+            event_bus.subscribe("engine_analysis", self.analysis_overlay.update_analysis)
         event_bus.subscribe("capture_fps", self._update_fps)
+        event_bus.subscribe("engine_status", self._handle_engine_status)
         self.fps_label = QtWidgets.QLabel("FPS: 0")
         self.statusBar().addPermanentWidget(self.fps_label)
         self.overlay_enabled = settings.get("overlay_transparent", False)
         if self.overlay_enabled:
             self.overlay_window = OverlayWindow(self.board_widget)
             self.overlay_window.opacity = settings.get("hud_opacity", 0.85)
-        self.analysis_overlay.apply_settings()
+        if self.analysis_overlay:
+            self.analysis_overlay.apply_settings()
+        self._engine_warning_shown = False
         board_detector.set_video_source(settings.get("video_source", 0))
         screen_capture_manager.apply_settings()
         board_detector.start()
@@ -2400,6 +2582,24 @@ class MainWindow(QtWidgets.QMainWindow):
         avg = self._fps_values.add(fps)
         self.fps_label.setText(f"FPS: {avg:.1f}")
 
+    def _handle_engine_status(self, payload: Dict[str, Any]) -> None:
+        available = payload.get("available", True) if isinstance(payload, dict) else True
+        if available or self._engine_warning_shown:
+            return
+
+        def notify() -> None:
+            candidates = payload.get("candidates", []) if isinstance(payload, dict) else []
+            trimmed = ", ".join(candidates[:4]) if candidates else "system PATH"
+            message = (
+                "Stockfish engine could not be started. Checked: "
+                f"{trimmed}. Configure the engine path in Settings."
+            )
+            self.statusBar().showMessage(message)
+            QtWidgets.QMessageBox.warning(self, "Stockfish Not Found", message)
+
+        QtCore.QTimer.singleShot(0, notify)
+        self._engine_warning_shown = True
+
     def apply_overlay_preferences(self) -> None:
         if self.overlay_window:
             self.overlay_window.opacity = settings.get("hud_opacity", 0.85)
@@ -2436,11 +2636,23 @@ class ScreenCaptureManager:
             board_detector.set_screen_capture(self.region, mode=self.mode, monitor=self.monitor)
 
     def _scan_sources(self) -> None:
-        for idx in range(5):
-            cap = cv2.VideoCapture(idx)
-            if cap is not None and cap.isOpened():
-                self.available_sources[f"Camera {idx}"] = idx
-                cap.release()
+        preferred = settings.get("video_source", 0)
+        indices = {0, 1}
+        try:
+            indices.add(int(preferred))
+        except (TypeError, ValueError):
+            pass
+        for idx in sorted(indices):
+            cap = None
+            try:
+                cap = cv2.VideoCapture(idx)
+                if cap is not None and cap.isOpened():
+                    self.available_sources[f"Camera {idx}"] = idx
+            except Exception as exc:
+                log.debug(f"Video source probe failed for index {idx}: {exc}")
+            finally:
+                if cap is not None:
+                    cap.release()
         log.info(f"Available video sources: {self.available_sources}")
 
     def select_source(self, name: str) -> None:
@@ -2614,13 +2826,16 @@ class EngineDownloader:
         self.path = path
 
     def ensure_engine(self) -> bool:
-        if shutil.which(self.path):
-            log.info("Stockfish binary found in PATH")
+        resolved, inspected = resolve_stockfish_binary(self.path)
+        if resolved:
+            log.info(f"Stockfish binary available at {resolved}")
             return True
-        if os.path.exists(self.path):
-            log.info("Stockfish binary found at configured path")
-            return True
-        log.warning("Stockfish binary not found; attempting download is not implemented")
+        details = ", ".join(inspected) if inspected else "<no candidates>"
+        log.warning(
+            "Stockfish binary not found; attempted locations: %s. "
+            "Please install Stockfish 17.1 and update the Settings dialog.",
+            details,
+        )
         return False
 
 
