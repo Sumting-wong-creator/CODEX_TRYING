@@ -5,7 +5,7 @@ CHMD Chess HUD Move Detector and Trainer
 This module implements a fully featured chess trainer that combines computer vision,
 engine integration, and a rich PyQt5 user interface into a single file. The program is
 designed to detect chess boards from webcam or screen captures, recognize piece positions,
-construct FEN strings, interact with Stockfish 16 NNUE, and provide a robust training
+construct FEN strings, interact with Stockfish 17.1 NNUE, and provide a robust training
 environment with evaluation overlays and multiple play modes.
 """
 
@@ -121,7 +121,7 @@ log = AppLogger.instance()
 # --------------------------------------------------------------------------------------
 
 DEFAULT_SETTINGS = {
-    "stockfish_path": "stockfish",
+    "stockfish_path": "stockfish-17.1",
     "difficulty": 10,
     "hint_enabled": True,
     "overlay_transparent": False,
@@ -130,10 +130,18 @@ DEFAULT_SETTINGS = {
     "video_source": 0,
     "use_screen_capture": False,
     "capture_region": [0, 0, 1920, 1080],
+    "screen_capture_mode": "manual",
+    "screen_monitor": 1,
+    "screen_refresh_interval": 0.35,
     "engine_depth": 20,
     "engine_threads": 4,
     "engine_hash": 512,
     "hud_opacity": 0.85,
+    "mini_overlay_enabled": True,
+    "mini_overlay_width": 280,
+    "mini_overlay_height": 160,
+    "mini_overlay_font": 14,
+    "mini_overlay_opacity": 0.9,
     "evaluation_history_size": 300,
     "pv_lines": 3,
     "double_tap_interval": 0.4,
@@ -388,6 +396,112 @@ class DetectionResult:
     confidence: float
 
 
+class ChessComBoardLocator:
+    """Auto-detect Chess.com style boards from full screen captures."""
+
+    def __init__(self) -> None:
+        self.last_region: Optional[Tuple[int, int, int, int]] = None
+        self._failure_count = 0
+        self._max_failures = 6
+        self._confidence_filter = MovingAverage(window=5)
+        self._last_score = 0.0
+        self._last_detection_time = 0.0
+
+    def locate(self, frame: np.ndarray) -> Optional[Tuple[int, int, int, int]]:
+        if frame is None or frame.size == 0:
+            return self.last_region
+        start = time.perf_counter()
+        region, score = self._detect_board_region(frame)
+        if region:
+            if self.last_region:
+                region = (
+                    int(self.last_region[0] * 0.7 + region[0] * 0.3),
+                    int(self.last_region[1] * 0.7 + region[1] * 0.3),
+                    int(self.last_region[2] * 0.7 + region[2] * 0.3),
+                    int(self.last_region[3] * 0.7 + region[3] * 0.3),
+                )
+            self.last_region = region
+            self._failure_count = 0
+            self._last_score = self._confidence_filter.add(score)
+        else:
+            self._failure_count += 1
+            if self.last_region and self._failure_count <= self._max_failures:
+                region = self.last_region
+            else:
+                region = None
+        self._last_detection_time = time.perf_counter() - start
+        return region
+
+    def _detect_board_region(
+        self, frame: np.ndarray
+    ) -> Tuple[Optional[Tuple[int, int, int, int]], float]:
+        height, width = frame.shape[:2]
+        scale = 1.0
+        max_dim = 1400
+        if max(height, width) > max_dim:
+            scale = max_dim / max(height, width)
+            resized = cv2.resize(frame, (int(width * scale), int(height * scale)), interpolation=cv2.INTER_AREA)
+        else:
+            resized = frame
+        lab = cv2.cvtColor(resized, cv2.COLOR_BGR2LAB)
+        l_channel, _, _ = cv2.split(lab)
+        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+        normalized = clahe.apply(l_channel)
+        blurred = cv2.bilateralFilter(normalized, 7, 75, 75)
+        edges = cv2.Canny(blurred, 40, 160)
+        edges = cv2.dilate(edges, np.ones((5, 5), np.uint8), iterations=1)
+        edges = cv2.erode(edges, np.ones((3, 3), np.uint8), iterations=1)
+        contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        best_region: Optional[Tuple[int, int, int, int]] = None
+        best_score = 0.0
+        total_area = float(resized.shape[0] * resized.shape[1])
+        for cnt in contours:
+            area = cv2.contourArea(cnt)
+            if area < total_area * 0.05:
+                continue
+            peri = cv2.arcLength(cnt, True)
+            approx = cv2.approxPolyDP(cnt, 0.012 * peri, True)
+            if len(approx) != 4:
+                continue
+            x, y, w_rect, h_rect = cv2.boundingRect(approx)
+            aspect = w_rect / float(h_rect)
+            if aspect < 0.85 or aspect > 1.15:
+                continue
+            roi = normalized[y : y + h_rect, x : x + w_rect]
+            grid_score = self._grid_score(roi)
+            compactness = min(w_rect, h_rect) / max(w_rect, h_rect)
+            size_score = min(1.0, area / (total_area * 0.6))
+            score = 0.6 * grid_score + 0.25 * size_score + 0.15 * compactness
+            if score > best_score:
+                best_score = score
+                best_region = (x, y, w_rect, h_rect)
+        if best_region is None:
+            return None, 0.0
+        x, y, w_rect, h_rect = best_region
+        region = (
+            int(x / scale),
+            int(y / scale),
+            int(w_rect / scale),
+            int(h_rect / scale),
+        )
+        return region, float(min(1.0, best_score))
+
+    def _grid_score(self, roi: np.ndarray) -> float:
+        if roi.size == 0:
+            return 0.0
+        resized = cv2.resize(roi, (256, 256), interpolation=cv2.INTER_AREA)
+        enhanced = cv2.GaussianBlur(resized, (5, 5), 0)
+        edges = cv2.Canny(enhanced, 50, 180)
+        vertical_profile = edges.mean(axis=0)
+        horizontal_profile = edges.mean(axis=1)
+        vert_peaks = np.count_nonzero(vertical_profile > 0.4 * vertical_profile.max())
+        horiz_peaks = np.count_nonzero(horizontal_profile > 0.4 * horizontal_profile.max())
+        normalized_vertical = vert_peaks / max(1, edges.shape[1])
+        normalized_horizontal = horiz_peaks / max(1, edges.shape[0])
+        texture = float(edges.mean() / 255.0)
+        return clamp((normalized_vertical + normalized_horizontal) / 2.0 + texture * 0.3, 0.0, 1.0)
+
+
 class BoardDetector:
     """Detects chess boards from video frames."""
 
@@ -401,12 +515,22 @@ class BoardDetector:
         self.thread: Optional[threading.Thread] = None
         self.frame_queue: "queue.Queue[np.ndarray]" = queue.Queue(maxsize=5)
         self.result_queue: "queue.Queue[DetectionResult]" = queue.Queue(maxsize=2)
-        self.analysis_interval = 0.5
+        base_interval = settings.get("screen_refresh_interval", 0.35)
+        self.screen_mode = settings.get("screen_capture_mode", "manual")
+        self.analysis_interval = max(0.2, base_interval if self.screen_mode == "chesscom" else base_interval + 0.15)
         self.last_analysis = 0.0
         self.board_template = self._create_board_template()
         self.piece_templates = self._load_piece_templates()
+        self.piece_edge_templates: Dict[str, np.ndarray] = {
+            name: cv2.Canny(template, 40, 160) for name, template in self.piece_templates.items()
+        }
         self.contour_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
         self.confidence_smoother = MovingAverage(window=10)
+        self.screen_region = tuple(settings.get("capture_region", [0, 0, 1920, 1080]))
+        self.monitor_index = settings.get("screen_monitor", 1)
+        self._screen_region_saved = 0.0
+        self.chesscom_locator = ChessComBoardLocator()
+        self.last_frame_digest: Optional[np.ndarray] = None
 
     def _create_board_template(self) -> np.ndarray:
         template = np.zeros((8 * self.square_size, 8 * self.square_size), dtype=np.uint8)
@@ -445,8 +569,26 @@ class BoardDetector:
             self.capture.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
             log.info(f"Video source set to {source}")
 
-    def set_screen_capture(self, region: Tuple[int, int, int, int]) -> None:
-        self.screen_region = region
+    def set_screen_capture(
+        self,
+        region: Tuple[int, int, int, int],
+        mode: Optional[str] = None,
+        monitor: Optional[int] = None,
+    ) -> None:
+        self.screen_region = tuple(region)
+        if mode:
+            self.screen_mode = mode
+        if monitor is not None:
+            self.monitor_index = monitor
+        self.last_frame_digest = None
+
+    def set_screen_mode(self, mode: str, monitor: Optional[int] = None) -> None:
+        self.screen_mode = mode
+        if monitor is not None:
+            self.monitor_index = monitor
+        base_interval = settings.get("screen_refresh_interval", 0.35)
+        self.analysis_interval = max(0.2, base_interval if mode == "chesscom" else base_interval + 0.15)
+        self.last_frame_digest = None
 
     def start(self) -> None:
         if self.running:
@@ -468,6 +610,10 @@ class BoardDetector:
     def _run_capture(self) -> None:
         fps_counter = FPSCounter()
         while self.running:
+            desired_mode = settings.get("screen_capture_mode", self.screen_mode)
+            desired_monitor = settings.get("screen_monitor", self.monitor_index)
+            if desired_mode != self.screen_mode or desired_monitor != self.monitor_index:
+                self.set_screen_mode(desired_mode, desired_monitor)
             frame = None
             if settings.get("use_screen_capture"):
                 frame = self._capture_screen_region()
@@ -480,6 +626,15 @@ class BoardDetector:
             if frame is None:
                 time.sleep(0.05)
                 continue
+            if self.screen_mode == "chesscom" and frame is not None:
+                max_dim = max(frame.shape[:2])
+                if max_dim > 1024:
+                    scale = 1024.0 / max_dim
+                    frame = cv2.resize(
+                        frame,
+                        (int(frame.shape[1] * scale), int(frame.shape[0] * scale)),
+                        interpolation=cv2.INTER_AREA,
+                    )
             if not self.frame_queue.full():
                 self.frame_queue.put(frame)
             fps = fps_counter.tick()
@@ -489,16 +644,51 @@ class BoardDetector:
             if now - self.last_analysis >= self.analysis_interval:
                 self.last_analysis = now
                 self._analyze_frames()
+            time.sleep(0.005)
 
     def _capture_screen_region(self) -> Optional[np.ndarray]:
         try:
             import mss
             with mss.mss() as sct:
+                monitors = sct.monitors
+                if not monitors:
+                    return None
+                monitor_index = clamp(float(self.monitor_index), 1.0, float(len(monitors) - 1))
+                monitor_idx = int(monitor_index)
+                monitor = monitors[monitor_idx]
+                self.monitor_index = monitor_idx
+                if self.screen_mode == "chesscom":
+                    sct_img = sct.grab(monitor)
+                    frame = np.array(sct_img)
+                    frame = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
+                    region = self.chesscom_locator.locate(frame)
+                    if region:
+                        x, y, w, h = region
+                        x = clamp(float(x), 0.0, float(frame.shape[1] - 1))
+                        y = clamp(float(y), 0.0, float(frame.shape[0] - 1))
+                        w = clamp(float(w), 32.0, float(frame.shape[1]))
+                        h = clamp(float(h), 32.0, float(frame.shape[0]))
+                        x_int, y_int, w_int, h_int = int(x), int(y), int(w), int(h)
+                        cropped = frame[y_int : y_int + h_int, x_int : x_int + w_int]
+                        absolute_region = (
+                            int(monitor["left"] + x_int),
+                            int(monitor["top"] + y_int),
+                            int(w_int),
+                            int(h_int),
+                        )
+                        self.screen_region = absolute_region
+                        now = time.time()
+                        if now - self._screen_region_saved > 3.0:
+                            settings.set("capture_region", list(absolute_region))
+                            settings.save()
+                            self._screen_region_saved = now
+                        return cropped
+                    return frame
                 region = {
                     "top": int(self.screen_region[1]),
                     "left": int(self.screen_region[0]),
-                    "width": int(self.screen_region[2]),
-                    "height": int(self.screen_region[3]),
+                    "width": int(max(32, self.screen_region[2])),
+                    "height": int(max(32, self.screen_region[3])),
                 }
                 sct_img = sct.grab(region)
                 img = np.array(sct_img)
@@ -508,6 +698,21 @@ class BoardDetector:
             log.error(f"Screen capture failed: {exc}")
             return None
 
+    def _board_grid_score(self, roi: np.ndarray) -> float:
+        if roi.size == 0:
+            return 0.0
+        roi_resized = cv2.resize(roi, (256, 256), interpolation=cv2.INTER_AREA)
+        edges = cv2.Canny(roi_resized, 45, 160)
+        vertical_profile = edges.mean(axis=0)
+        horizontal_profile = edges.mean(axis=1)
+        vertical_peaks = np.count_nonzero(vertical_profile > 0.35 * vertical_profile.max())
+        horizontal_peaks = np.count_nonzero(horizontal_profile > 0.35 * horizontal_profile.max())
+        grid_ratio = (
+            vertical_peaks / max(1, edges.shape[1]) + horizontal_peaks / max(1, edges.shape[0])
+        ) / 2.0
+        energy = edges.mean() / 255.0
+        return clamp(grid_ratio * 0.8 + energy * 0.2, 0.0, 1.0)
+
     def _analyze_frames(self) -> None:
         frames: List[np.ndarray] = []
         while not self.frame_queue.empty():
@@ -515,6 +720,20 @@ class BoardDetector:
         if not frames:
             return
         frame = frames[-1]
+        if frame.ndim == 3:
+            digest_source = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        else:
+            digest_source = frame
+        digest = cv2.resize(digest_source, (32, 32), interpolation=cv2.INTER_AREA)
+        if self.last_frame_digest is not None:
+            diff = float(
+                np.mean(
+                    np.abs(digest.astype(np.float32) - self.last_frame_digest.astype(np.float32))
+                )
+            )
+            if diff < 1.0 and self.last_result and (time.time() - self.last_result.last_update) < 1.2:
+                return
+        self.last_frame_digest = digest
         self.last_frame = frame
         detection = self._detect_board(frame)
         self.last_result = detection
@@ -524,29 +743,64 @@ class BoardDetector:
 
     @timed("detect_board")
     def _detect_board(self, frame: np.ndarray) -> DetectionResult:
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        blurred = cv2.GaussianBlur(gray, (5, 5), 0)
-        edged = cv2.Canny(blurred, 50, 150)
-        dilated = cv2.dilate(edged, self.contour_kernel, iterations=2)
-        contours, _ = cv2.findContours(dilated, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        if frame.ndim == 3:
+            lab = cv2.cvtColor(frame, cv2.COLOR_BGR2LAB)
+            gray = cv2.split(lab)[0]
+        else:
+            gray = frame
+        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+        normalized = clahe.apply(gray)
+        blurred = cv2.bilateralFilter(normalized, 5, 60, 60)
+        adaptive = cv2.adaptiveThreshold(
+            blurred,
+            255,
+            cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+            cv2.THRESH_BINARY_INV,
+            15,
+            5,
+        )
+        edges = cv2.Canny(blurred, 35, 140)
+        combined = cv2.bitwise_or(edges, adaptive)
+        dilated = cv2.dilate(combined, self.contour_kernel, iterations=2)
+        processed = cv2.erode(dilated, self.contour_kernel, iterations=1)
+        contours, _ = cv2.findContours(processed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
         board_rect = None
-        best_area = 0
+        best_score = 0.0
         for cnt in contours:
+            area = cv2.contourArea(cnt)
+            if area < 4000:
+                continue
             perimeter = cv2.arcLength(cnt, True)
             approx = cv2.approxPolyDP(cnt, 0.02 * perimeter, True)
             if len(approx) == 4 and cv2.isContourConvex(approx):
-                area = cv2.contourArea(approx)
-                if area > best_area and area > 5000:
-                    best_area = area
+                x, y, w, h = cv2.boundingRect(approx)
+                aspect = w / float(h)
+                if aspect < 0.85 or aspect > 1.15:
+                    continue
+                fill_ratio = area / float(w * h)
+                if fill_ratio < 0.55:
+                    continue
+                roi = normalized[y : y + h, x : x + w]
+                grid_score = self._board_grid_score(roi)
+                score = 0.6 * grid_score + 0.4 * fill_ratio
+                if score > best_score:
+                    best_score = score
                     board_rect = approx
         board_found = board_rect is not None
         confidence = 0.0
         pieces: Dict[str, str] = {}
         fen = ""
         if board_found:
-            warped = self._extract_board(gray, board_rect)
+            warped = self._extract_board(normalized, board_rect)
             fen, pieces, confidence = self._recognize_pieces(warped)
+            confidence = (confidence + best_score) / 2.0
+        elif self.last_result and self.last_result.board_rect is not None and self.last_result.confidence > 0.4:
+            board_rect = self.last_result.board_rect
+            board_found = True
+            warped = self._extract_board(normalized, board_rect)
+            fen, pieces, confidence = self._recognize_pieces(warped)
+            confidence = (confidence + self.last_result.confidence) / 2.0
         else:
             fen = ""
         avg_confidence = self.confidence_smoother.add(confidence if board_found else 0.0)
@@ -582,6 +836,9 @@ class BoardDetector:
         return warped
 
     def _recognize_pieces(self, board_img: np.ndarray) -> Tuple[str, Dict[str, str], float]:
+        board_img = cv2.GaussianBlur(board_img, (3, 3), 0)
+        board_img = cv2.normalize(board_img, None, 0, 255, cv2.NORM_MINMAX)
+        board_img = cv2.equalizeHist(board_img.astype(np.uint8))
         board = chess.Board()
         board.clear()
         pieces: Dict[str, str] = {}
@@ -608,13 +865,25 @@ class BoardDetector:
         best_piece = ""
         best_score = 0.0
         resized = cv2.resize(square_img, (self.square_size, self.square_size))
+        normalized = cv2.equalizeHist(resized.astype(np.uint8))
+        contrast = float(np.std(normalized))
+        if contrast < 10.0:
+            return "", 0.0
+        edges = cv2.Canny(normalized, 40, 120)
         for piece, template in self.piece_templates.items():
-            result = cv2.matchTemplate(resized, template, cv2.TM_CCOEFF_NORMED)
+            result = cv2.matchTemplate(normalized, template, cv2.TM_CCOEFF_NORMED)
             _, max_val, _, _ = cv2.minMaxLoc(result)
-            if max_val > best_score:
-                best_score = max_val
+            edge_template = self.piece_edge_templates.get(piece)
+            edge_score = 0.0
+            if edge_template is not None:
+                edge_result = cv2.matchTemplate(edges, edge_template, cv2.TM_CCOEFF_NORMED)
+                _, edge_score, _, _ = cv2.minMaxLoc(edge_result)
+            combined_score = 0.65 * max_val + 0.35 * edge_score
+            if combined_score > best_score:
+                best_score = combined_score
                 best_piece = piece
-        if best_score > 0.55:
+        threshold = 0.5 if self.screen_mode == "chesscom" else 0.55
+        if best_score > threshold:
             symbol = best_piece[1]
             if best_piece[0] == "w":
                 symbol = symbol.upper()
@@ -638,6 +907,7 @@ class EngineLine:
     multipv: int
     score: chess.engine.PovScore
     moves: List[chess.Move]
+    wdl: Tuple[int, int, int] = (0, 0, 0)
 
 
 @dataclass
@@ -648,6 +918,7 @@ class EngineAnalysis:
     nodes: int
     time: float
     nps: int
+    wdl: Tuple[int, int, int] = (0, 0, 0)
 
 
 class StockfishEngine:
@@ -667,6 +938,8 @@ class StockfishEngine:
         self.depth = settings.get("engine_depth", 20)
         self.threads = settings.get("engine_threads", 4)
         self.hash = settings.get("engine_hash", 512)
+        self.max_multipv = settings.get("pv_lines", 3)
+        self.multipv_lines: Dict[int, EngineLine] = {}
         self.analysis_thread = threading.Thread(target=self._analysis_loop, daemon=True)
         self.analysis_requests: "queue.Queue[Tuple[str, Optional[int], Optional[float]]]" = queue.Queue()
         self.analysis_thread.start()
@@ -691,6 +964,8 @@ class StockfishEngine:
                 self._send_command("uci")
                 self._set_option("Threads", self.threads)
                 self._set_option("Hash", self.hash)
+                self._set_option("MultiPV", self.max_multipv)
+                self._set_option("UCI_ShowWDL", "true")
                 log.info("Stockfish engine started")
             except Exception as exc:
                 log.error(f"Failed to start Stockfish: {exc}")
@@ -735,61 +1010,68 @@ class StockfishEngine:
 
     def _handle_info(self, line: str) -> None:
         tokens = line.split()
-        info = {}
-        key = None
-        for token in tokens[1:]:
-            if token in {"depth", "seldepth", "multipv", "score", "nodes", "nps", "time"}:
-                key = token
-                continue
-            if key is None:
-                continue
-            if key == "score":
-                if token == "cp":
-                    key = "score_cp"
-                    continue
-                elif token == "mate":
-                    key = "score_mate"
-                    continue
-                else:
+        if len(tokens) < 2:
+            return
+        info = self._tokenize_info(tokens)
+        for key in ("depth", "seldepth", "nodes", "nps", "time"):
+            if key in info:
+                self.engine_info[key] = info[key]
+        multipv = info.get("multipv", 1)
+        line_entry = self._compose_engine_line(info)
+        if line_entry:
+            self.multipv_lines[multipv] = line_entry
+        if not self.multipv_lines:
+            return
+        analysis = self._compose_analysis(info)
+        if analysis:
+            self.last_analysis = analysis
+            if self.analysis_callback:
+                self.analysis_callback(analysis)
+            event_bus.emit("engine_analysis", analysis)
+
+    def _tokenize_info(self, tokens: List[str]) -> Dict[str, Any]:
+        info: Dict[str, Any] = {}
+        idx = 1
+        length = len(tokens)
+        while idx < length:
+            token = tokens[idx]
+            if token in {"depth", "seldepth", "nodes", "nps", "time", "multipv"}:
+                if idx + 1 < length:
                     try:
-                        value = int(token)
-                        info[key] = value
+                        info[token] = int(tokens[idx + 1])
                     except ValueError:
                         pass
-                key = None
-            elif key == "multipv":
+                    idx += 1
+            elif token == "score" and idx + 2 < length:
+                kind = tokens[idx + 1]
+                value = tokens[idx + 2]
                 try:
-                    info[key] = int(token)
+                    if kind == "cp":
+                        info["score_cp"] = int(value)
+                    elif kind == "mate":
+                        info["score_mate"] = int(value)
                 except ValueError:
                     pass
-                key = None
-            elif key in {"depth", "seldepth", "nodes", "nps", "time"}:
+                idx += 2
+            elif token == "pv":
+                info["pv"] = tokens[idx + 1 :]
+                break
+            elif token == "wdl" and idx + 3 < length:
                 try:
-                    info[key] = int(token)
+                    info["wdl"] = (
+                        int(tokens[idx + 1]),
+                        int(tokens[idx + 2]),
+                        int(tokens[idx + 3]),
+                    )
                 except ValueError:
                     pass
-                key = None
-        if "pv" in tokens:
-            idx = tokens.index("pv")
-            pv_moves = tokens[idx + 1 :]
-            info["pv"] = pv_moves
-        self.engine_info = info
-        if self.analysis_callback:
-            analysis = self._parse_analysis(info)
-            if analysis:
-                self.last_analysis = analysis
-                self.analysis_callback(analysis)
-                event_bus.emit("engine_analysis", analysis)
+                idx += 3
+            idx += 1
+        return info
 
-    def _parse_analysis(self, info: Dict[str, Any]) -> Optional[EngineAnalysis]:
-        if not info:
-            return None
-        depth = info.get("depth", 0)
-        nodes = info.get("nodes", 0)
-        nps = info.get("nps", 0)
-        time_spent = info.get("time", 0) / 1000.0
-        pv_moves = info.get("pv", [])
+    def _compose_engine_line(self, info: Dict[str, Any]) -> Optional[EngineLine]:
         multipv = info.get("multipv", 1)
+        depth = info.get("depth", 0)
         score_cp = info.get("score_cp")
         score_mate = info.get("score_mate")
         if score_cp is not None:
@@ -800,23 +1082,39 @@ class StockfishEngine:
             score = chess.engine.PovScore(chess.engine.Cp(0), chess.WHITE)
         moves: List[chess.Move] = []
         board = chess.Board(self.current_position_fen)
-        for mv in pv_moves:
+        for mv in info.get("pv", []):
             try:
                 move = board.parse_uci(mv)
                 moves.append(move)
                 board.push(move)
             except ValueError:
                 break
-        engine_line = EngineLine(depth=depth, multipv=multipv, score=score, moves=moves)
-        analysis = EngineAnalysis(
-            lines=[engine_line],
-            best_move=moves[0] if moves else None,
+        existing = self.multipv_lines.get(multipv)
+        if not moves and existing:
+            moves = existing.moves
+        wdl = info.get("wdl") or (existing.wdl if existing else (0, 0, 0))
+        return EngineLine(depth=depth, multipv=multipv, score=score, moves=moves, wdl=wdl)
+
+    def _compose_analysis(self, info: Dict[str, Any]) -> Optional[EngineAnalysis]:
+        if not self.multipv_lines:
+            return None
+        sorted_indices = sorted(self.multipv_lines)[: self.max_multipv]
+        lines = [self.multipv_lines[idx] for idx in sorted_indices]
+        best_move = lines[0].moves[0] if lines and lines[0].moves else None
+        depth = info.get("depth", lines[0].depth if lines else 0)
+        nodes = info.get("nodes", self.engine_info.get("nodes", 0))
+        nps = info.get("nps", self.engine_info.get("nps", 0))
+        time_spent = info.get("time", self.engine_info.get("time", 0)) / 1000.0
+        wdl = info.get("wdl", lines[0].wdl if lines else (0, 0, 0))
+        return EngineAnalysis(
+            lines=lines,
+            best_move=best_move,
             depth=depth,
             nodes=nodes,
             time=time_spent,
             nps=nps,
+            wdl=wdl,
         )
-        return analysis
 
     def analyze(self, fen: str, depth: Optional[int] = None, movetime: Optional[float] = None) -> None:
         self.analysis_requests.put((fen, depth, movetime))
@@ -831,9 +1129,13 @@ class StockfishEngine:
             except queue.Empty:
                 continue
             self.current_position_fen = fen
+            self.max_multipv = settings.get("pv_lines", self.max_multipv)
+            self.multipv_lines.clear()
             self.start()
             self._send_command("stop")
             self._send_command(f"position fen {fen}")
+            self._set_option("MultiPV", self.max_multipv)
+            self._set_option("UCI_ShowWDL", "true")
             if movetime:
                 self._send_command(f"go movetime {int(movetime * 1000)}")
             else:
@@ -841,7 +1143,7 @@ class StockfishEngine:
                 self._send_command(f"go depth {d}")
 
 
-engine = StockfishEngine(settings.get("stockfish_path", "stockfish"))
+engine = StockfishEngine(settings.get("stockfish_path", "stockfish-17.1"))
 
 
 # --------------------------------------------------------------------------------------
@@ -1647,6 +1949,140 @@ class OverlayWindow(QtWidgets.QWidget):
         painter.end()
 
 
+class AnalysisOverlayWindow(QtWidgets.QWidget):
+    def __init__(self, parent: Optional[QtWidgets.QWidget] = None) -> None:
+        super().__init__(parent)
+        self.setWindowFlags(
+            QtCore.Qt.WindowStaysOnTopHint | QtCore.Qt.FramelessWindowHint | QtCore.Qt.Tool
+        )
+        self.setAttribute(QtCore.Qt.WA_TranslucentBackground, True)
+        self.setAttribute(QtCore.Qt.WA_TransparentForMouseEvents, True)
+        self.font_size = settings.get("mini_overlay_font", 14)
+        self.opacity = settings.get("mini_overlay_opacity", 0.9)
+        self.best_lines: List[str] = []
+        self.score = 0.0
+        self.wdl: Tuple[int, int, int] = (0, 0, 0)
+        self.last_update = 0.0
+        self._last_paint = 0.0
+        self.apply_settings()
+
+    def set_enabled(self, enabled: bool) -> None:
+        if enabled:
+            self.show()
+        else:
+            self.hide()
+
+    def apply_settings(self) -> None:
+        width = settings.get("mini_overlay_width", 280)
+        height = settings.get("mini_overlay_height", 160)
+        self.resize(width, height)
+        self.font_size = settings.get("mini_overlay_font", 14)
+        self.opacity = settings.get("mini_overlay_opacity", 0.9)
+        self.setWindowOpacity(self.opacity)
+        if settings.get("mini_overlay_enabled", True):
+            self.show()
+        else:
+            self.hide()
+        self.reposition()
+
+    def update_analysis(self, analysis: EngineAnalysis) -> None:
+        if not self.isVisible():
+            return
+        board = chess.Board(engine.current_position_fen)
+        lines: List[str] = []
+        for line in analysis.lines[:3]:
+            temp = board.copy()
+            moves: List[str] = []
+            for move in line.moves[:3]:
+                try:
+                    moves.append(temp.san(move))
+                    temp.push(move)
+                except ValueError:
+                    break
+            score = line.score.white().score(mate_score=1000)
+            prefix = f"{line.multipv}. " if line.multipv else ""
+            moves_text = " ".join(moves) if moves else "..."
+            lines.append(f"{prefix}{moves_text} ({score:+.1f})")
+        if not lines and analysis.best_move:
+            try:
+                lines.append(board.san(analysis.best_move))
+            except ValueError:
+                lines.append(analysis.best_move.uci())
+        self.best_lines = lines
+        if analysis.lines:
+            self.score = analysis.lines[0].score.white().score(mate_score=1000)
+        if getattr(analysis, "wdl", (0, 0, 0)) != (0, 0, 0):
+            self.wdl = analysis.wdl
+        elif analysis.lines and getattr(analysis.lines[0], "wdl", (0, 0, 0)) != (0, 0, 0):
+            self.wdl = analysis.lines[0].wdl
+        self.last_update = time.time()
+        if time.time() - self._last_paint > 0.05:
+            self.update()
+
+    def paintEvent(self, event: QtGui.QPaintEvent) -> None:
+        self._last_paint = time.time()
+        painter = QtGui.QPainter(self)
+        painter.setRenderHint(QtGui.QPainter.Antialiasing)
+        rect = self.rect().adjusted(4, 4, -4, -4)
+        background = QtGui.QColor(20, 28, 40)
+        background.setAlpha(int(255 * self.opacity))
+        painter.setBrush(background)
+        painter.setPen(QtGui.QPen(QtGui.QColor(90, 140, 200, 180), 1))
+        painter.drawRoundedRect(rect, 12, 12)
+
+        bar_rect = QtCore.QRect(rect.left() + 14, rect.top() + 14, 18, rect.height() - 28)
+        total = sum(self.wdl)
+        if total > 0:
+            segments = [
+                (QtGui.QColor(90, 200, 140, 220), self.wdl[0] / total),
+                (QtGui.QColor(200, 200, 160, 220), self.wdl[1] / total),
+                (QtGui.QColor(210, 90, 90, 220), self.wdl[2] / total),
+            ]
+            y = bar_rect.top()
+            for color, ratio in segments:
+                seg_height = max(2, int(bar_rect.height() * ratio))
+                segment = QtCore.QRect(bar_rect.left(), y, bar_rect.width(), seg_height)
+                painter.setBrush(color)
+                painter.setPen(QtCore.Qt.NoPen)
+                painter.drawRect(segment)
+                y += seg_height
+        painter.setPen(QtGui.QPen(QtGui.QColor(255, 255, 255, 60), 1))
+        painter.drawRect(bar_rect)
+
+        text_rect = QtCore.QRect(bar_rect.right() + 12, rect.top() + 14, rect.width() - bar_rect.width() - 26, rect.height() - 28)
+        painter.setPen(QtGui.QColor(235, 240, 250, 230))
+        font = painter.font()
+        font.setPointSize(self.font_size)
+        painter.setFont(font)
+        if self.best_lines:
+            line_height = font.pointSize() + 6
+            y = text_rect.top()
+            for entry in self.best_lines:
+                if y + line_height > text_rect.bottom():
+                    break
+                painter.drawText(text_rect.left(), y + line_height, entry)
+                y += line_height
+        else:
+            painter.drawText(text_rect, QtCore.Qt.AlignLeft | QtCore.Qt.AlignVCenter, "Waiting for analysis…")
+        painter.setPen(QtGui.QColor(160, 210, 255, 220))
+        painter.drawText(
+            text_rect.left(),
+            text_rect.bottom(),
+            f"Eval: {self.score:+.1f} | Updated {max(0.0, time.time() - self.last_update):.1f}s ago",
+        )
+        painter.end()
+
+    def reposition(self) -> None:
+        parent = self.parentWidget()
+        if parent is None:
+            return
+        geo = parent.frameGeometry()
+        if not geo.isValid():
+            return
+        x = geo.right() - self.width() - 40
+        y = geo.top() + 80
+        self.move(max(0, x), max(0, y))
+
 class SettingsDialog(QtWidgets.QDialog):
     def __init__(self, parent: Optional[QtWidgets.QWidget] = None) -> None:
         super().__init__(parent)
@@ -1663,6 +2099,15 @@ class SettingsDialog(QtWidgets.QDialog):
         self.depth_slider.setRange(5, 40)
         self.depth_slider.setValue(settings.get("engine_depth", 20))
         layout.addRow("Engine Depth", self.depth_slider)
+        self.screen_mode_combo = QtWidgets.QComboBox()
+        self.screen_mode_combo.addItems(["Manual Region", "Chess.com Auto"])
+        current_mode = settings.get("screen_capture_mode", "manual")
+        self.screen_mode_combo.setCurrentIndex(0 if current_mode == "manual" else 1)
+        layout.addRow("Screen Capture Mode", self.screen_mode_combo)
+        self.screen_monitor_spin = QtWidgets.QSpinBox()
+        self.screen_monitor_spin.setRange(1, 8)
+        self.screen_monitor_spin.setValue(settings.get("screen_monitor", 1))
+        layout.addRow("Screen Monitor", self.screen_monitor_spin)
         self.opacity_slider = QtWidgets.QSlider(QtCore.Qt.Horizontal)
         self.opacity_slider.setRange(10, 100)
         self.opacity_slider.setValue(int(settings.get("hud_opacity", 0.85) * 100))
@@ -1670,6 +2115,25 @@ class SettingsDialog(QtWidgets.QDialog):
         self.overlay_checkbox = QtWidgets.QCheckBox("Enable Always-on-top Overlay")
         self.overlay_checkbox.setChecked(settings.get("overlay_transparent", False))
         layout.addRow(self.overlay_checkbox)
+        self.mini_overlay_checkbox = QtWidgets.QCheckBox("Enable Mini Analysis Overlay")
+        self.mini_overlay_checkbox.setChecked(settings.get("mini_overlay_enabled", True))
+        layout.addRow(self.mini_overlay_checkbox)
+        self.mini_overlay_width_spin = QtWidgets.QSpinBox()
+        self.mini_overlay_width_spin.setRange(160, 600)
+        self.mini_overlay_width_spin.setValue(settings.get("mini_overlay_width", 280))
+        layout.addRow("Overlay Width", self.mini_overlay_width_spin)
+        self.mini_overlay_height_spin = QtWidgets.QSpinBox()
+        self.mini_overlay_height_spin.setRange(120, 500)
+        self.mini_overlay_height_spin.setValue(settings.get("mini_overlay_height", 160))
+        layout.addRow("Overlay Height", self.mini_overlay_height_spin)
+        self.mini_overlay_font_spin = QtWidgets.QSpinBox()
+        self.mini_overlay_font_spin.setRange(8, 32)
+        self.mini_overlay_font_spin.setValue(settings.get("mini_overlay_font", 14))
+        layout.addRow("Overlay Font Size", self.mini_overlay_font_spin)
+        self.mini_overlay_opacity_slider = QtWidgets.QSlider(QtCore.Qt.Horizontal)
+        self.mini_overlay_opacity_slider.setRange(30, 100)
+        self.mini_overlay_opacity_slider.setValue(int(settings.get("mini_overlay_opacity", 0.9) * 100))
+        layout.addRow("Overlay Opacity", self.mini_overlay_opacity_slider)
         button_box = QtWidgets.QDialogButtonBox(
             QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel
         )
@@ -1681,9 +2145,21 @@ class SettingsDialog(QtWidgets.QDialog):
         settings.set("stockfish_path", self.stockfish_path_edit.text())
         settings.set("difficulty", self.difficulty_slider.value())
         settings.set("engine_depth", self.depth_slider.value())
+        selected_mode = "manual" if self.screen_mode_combo.currentIndex() == 0 else "chesscom"
+        settings.set("screen_capture_mode", selected_mode)
+        settings.set("screen_monitor", self.screen_monitor_spin.value())
         settings.set("hud_opacity", self.opacity_slider.value() / 100.0)
         settings.set("overlay_transparent", self.overlay_checkbox.isChecked())
+        settings.set("mini_overlay_enabled", self.mini_overlay_checkbox.isChecked())
+        settings.set("mini_overlay_width", self.mini_overlay_width_spin.value())
+        settings.set("mini_overlay_height", self.mini_overlay_height_spin.value())
+        settings.set("mini_overlay_font", self.mini_overlay_font_spin.value())
+        settings.set("mini_overlay_opacity", self.mini_overlay_opacity_slider.value() / 100.0)
         settings.save()
+        try:
+            screen_capture_manager.apply_settings()
+        except NameError:
+            pass
         super().accept()
 
 
@@ -1744,6 +2220,14 @@ class GameControlPanel(QtWidgets.QWidget):
         settings_button = LiquidGlassButton("Settings")
         settings_button.clicked.connect(self.open_settings)
         layout.addWidget(settings_button)
+        self.screen_capture_checkbox = QtWidgets.QCheckBox("Use Screen Capture")
+        self.screen_capture_checkbox.setChecked(settings.get("use_screen_capture", False))
+        self.screen_capture_checkbox.stateChanged.connect(self._toggle_screen_capture)
+        layout.addWidget(self.screen_capture_checkbox)
+        self.chesscom_mode_checkbox = QtWidgets.QCheckBox("Chess.com Auto Mode")
+        self.chesscom_mode_checkbox.setChecked(settings.get("screen_capture_mode", "manual") == "chesscom")
+        self.chesscom_mode_checkbox.stateChanged.connect(self._toggle_chesscom_mode)
+        layout.addWidget(self.chesscom_mode_checkbox)
         layout.addStretch(1)
         self.model = model
 
@@ -1761,8 +2245,42 @@ class GameControlPanel(QtWidgets.QWidget):
         dialog = SettingsDialog(self)
         if dialog.exec_() == QtWidgets.QDialog.Accepted:
             engine.stop()
-            engine.path = settings.get("stockfish_path", "stockfish")
+            engine.path = settings.get("stockfish_path", "stockfish-17.1")
+            engine.depth = settings.get("engine_depth", engine.depth)
+            engine.max_multipv = settings.get("pv_lines", engine.max_multipv)
             engine.start()
+            screen_capture_manager.apply_settings()
+            self.screen_capture_checkbox.blockSignals(True)
+            self.screen_capture_checkbox.setChecked(settings.get("use_screen_capture", False))
+            self.screen_capture_checkbox.blockSignals(False)
+            self.chesscom_mode_checkbox.blockSignals(True)
+            self.chesscom_mode_checkbox.setChecked(settings.get("screen_capture_mode", "manual") == "chesscom")
+            self.chesscom_mode_checkbox.blockSignals(False)
+            target_window = self.window()
+            if hasattr(target_window, "overlay_enabled") and hasattr(target_window, "toggle_overlay"):
+                desired_overlay = settings.get("overlay_transparent", False)
+                if getattr(target_window, "overlay_enabled") != desired_overlay:
+                    target_window.toggle_overlay()
+            if hasattr(target_window, "apply_overlay_preferences"):
+                target_window.apply_overlay_preferences()
+
+    def _toggle_screen_capture(self, state: int) -> None:
+        enabled = state == QtCore.Qt.Checked
+        screen_capture_manager.set_screen_capture(enabled)
+        if not enabled:
+            self.chesscom_mode_checkbox.blockSignals(True)
+            self.chesscom_mode_checkbox.setChecked(False)
+            self.chesscom_mode_checkbox.blockSignals(False)
+            screen_capture_manager.update_mode("manual")
+
+    def _toggle_chesscom_mode(self, state: int) -> None:
+        mode = "chesscom" if state == QtCore.Qt.Checked else "manual"
+        screen_capture_manager.update_mode(mode)
+        if mode == "chesscom" and not self.screen_capture_checkbox.isChecked():
+            self.screen_capture_checkbox.blockSignals(True)
+            self.screen_capture_checkbox.setChecked(True)
+            self.screen_capture_checkbox.blockSignals(False)
+            screen_capture_manager.set_screen_capture(True)
 
 
 class MainWindow(QtWidgets.QMainWindow):
@@ -1794,15 +2312,20 @@ class MainWindow(QtWidgets.QMainWindow):
         main_layout.addLayout(side_layout, 1)
         self.statusBar().showMessage("Ready")
         self.overlay_window: Optional[OverlayWindow] = None
+        self.analysis_overlay = AnalysisOverlayWindow(self)
         self._setup_shortcuts()
         event_bus.subscribe("engine_analysis", self._update_analysis)
+        event_bus.subscribe("engine_analysis", self.analysis_overlay.update_analysis)
         event_bus.subscribe("capture_fps", self._update_fps)
         self.fps_label = QtWidgets.QLabel("FPS: 0")
         self.statusBar().addPermanentWidget(self.fps_label)
         self.overlay_enabled = settings.get("overlay_transparent", False)
         if self.overlay_enabled:
             self.overlay_window = OverlayWindow(self.board_widget)
+            self.overlay_window.opacity = settings.get("hud_opacity", 0.85)
+        self.analysis_overlay.apply_settings()
         board_detector.set_video_source(settings.get("video_source", 0))
+        screen_capture_manager.apply_settings()
         board_detector.start()
         engine.start()
         engine.analyze(self.model.board.fen())
@@ -1840,8 +2363,12 @@ class MainWindow(QtWidgets.QMainWindow):
             if settings.get("overlay_transparent", False) != self.overlay_enabled:
                 self.toggle_overlay()
             engine.stop()
-            engine.path = settings.get("stockfish_path", "stockfish")
+            engine.path = settings.get("stockfish_path", "stockfish-17.1")
+            engine.depth = settings.get("engine_depth", engine.depth)
+            engine.max_multipv = settings.get("pv_lines", engine.max_multipv)
             engine.start()
+            screen_capture_manager.apply_settings()
+            self.apply_overlay_preferences()
 
     def toggle_overlay(self) -> None:
         self.overlay_enabled = not self.overlay_enabled
@@ -1850,10 +2377,13 @@ class MainWindow(QtWidgets.QMainWindow):
         if self.overlay_enabled:
             if not self.overlay_window:
                 self.overlay_window = OverlayWindow(self.board_widget)
+            self.overlay_window.opacity = settings.get("hud_opacity", 0.85)
+            self.overlay_window.update()
         else:
             if self.overlay_window:
                 self.overlay_window.close()
                 self.overlay_window = None
+        self.apply_overlay_preferences()
 
     def closeEvent(self, event: QtGui.QCloseEvent) -> None:
         board_detector.stop()
@@ -1870,6 +2400,24 @@ class MainWindow(QtWidgets.QMainWindow):
         avg = self._fps_values.add(fps)
         self.fps_label.setText(f"FPS: {avg:.1f}")
 
+    def apply_overlay_preferences(self) -> None:
+        if self.overlay_window:
+            self.overlay_window.opacity = settings.get("hud_opacity", 0.85)
+            self.overlay_window.update()
+        if self.analysis_overlay:
+            self.analysis_overlay.apply_settings()
+            self.analysis_overlay.set_enabled(settings.get("mini_overlay_enabled", True))
+
+    def resizeEvent(self, event: QtGui.QResizeEvent) -> None:
+        super().resizeEvent(event)
+        if self.analysis_overlay:
+            self.analysis_overlay.reposition()
+
+    def moveEvent(self, event: QtGui.QMoveEvent) -> None:
+        super().moveEvent(event)
+        if self.analysis_overlay:
+            self.analysis_overlay.reposition()
+
 
 # --------------------------------------------------------------------------------------
 # Capture source selection and screen grabbing utilities
@@ -1879,8 +2427,13 @@ class ScreenCaptureManager:
     def __init__(self) -> None:
         self.available_sources: Dict[str, int] = {}
         self._scan_sources()
-        self.screen_mode = settings.get("use_screen_capture", False)
+        self.enabled = settings.get("use_screen_capture", False)
         self.region = tuple(settings.get("capture_region", [0, 0, 1920, 1080]))
+        self.mode = settings.get("screen_capture_mode", "manual")
+        self.monitor = settings.get("screen_monitor", 1)
+        board_detector.set_screen_mode(self.mode, self.monitor)
+        if self.mode == "manual":
+            board_detector.set_screen_capture(self.region, mode=self.mode, monitor=self.monitor)
 
     def _scan_sources(self) -> None:
         for idx in range(5):
@@ -1899,15 +2452,45 @@ class ScreenCaptureManager:
             log.info(f"Video source selected: {name}")
 
     def set_screen_capture(self, enabled: bool, region: Optional[Tuple[int, int, int, int]] = None) -> None:
-        self.screen_mode = enabled
+        self.enabled = enabled
         settings.set("use_screen_capture", enabled)
         if region:
             self.region = region
             settings.set("capture_region", list(region))
         settings.save()
-        if enabled:
-            board_detector.set_screen_capture(self.region)
-        log.info(f"Screen capture {'enabled' if enabled else 'disabled'} with region {self.region}")
+        self.mode = settings.get("screen_capture_mode", self.mode)
+        self.monitor = settings.get("screen_monitor", self.monitor)
+        board_detector.set_screen_mode(self.mode, self.monitor)
+        if enabled and self.mode == "manual":
+            board_detector.set_screen_capture(self.region, mode=self.mode, monitor=self.monitor)
+        log.info(
+            f"Screen capture {'enabled' if enabled else 'disabled'} in mode {self.mode} with region {self.region}"
+        )
+
+    def update_mode(self, mode: str) -> None:
+        self.mode = mode
+        settings.set("screen_capture_mode", mode)
+        settings.save()
+        board_detector.set_screen_mode(mode, self.monitor)
+        if self.enabled and mode == "manual":
+            board_detector.set_screen_capture(self.region, mode=mode, monitor=self.monitor)
+
+    def set_monitor(self, monitor: int) -> None:
+        self.monitor = monitor
+        settings.set("screen_monitor", monitor)
+        settings.save()
+        board_detector.set_screen_mode(self.mode, monitor)
+        if self.enabled and self.mode == "manual":
+            board_detector.set_screen_capture(self.region, mode=self.mode, monitor=monitor)
+
+    def apply_settings(self) -> None:
+        self.enabled = settings.get("use_screen_capture", self.enabled)
+        self.region = tuple(settings.get("capture_region", list(self.region)))
+        self.mode = settings.get("screen_capture_mode", self.mode)
+        self.monitor = settings.get("screen_monitor", self.monitor)
+        board_detector.set_screen_mode(self.mode, self.monitor)
+        if self.enabled and self.mode == "manual":
+            board_detector.set_screen_capture(self.region, mode=self.mode, monitor=self.monitor)
 
 
 screen_capture_manager = ScreenCaptureManager()
@@ -2041,7 +2624,7 @@ class EngineDownloader:
         return False
 
 
-engine_downloader = EngineDownloader(settings.get("stockfish_path", "stockfish"))
+engine_downloader = EngineDownloader(settings.get("stockfish_path", "stockfish-17.1"))
 
 
 # --------------------------------------------------------------------------------------
@@ -2155,10 +2738,18 @@ class EngineMonitor(QtCore.QObject):
                 board.push(move)
                 score = chess.engine.PovScore(chess.engine.Cp(random.randint(-50, 50)), chess.WHITE)
                 additional_lines.append(
-                    EngineLine(depth=max(analysis.depth - 2, 1), multipv=1, score=score, moves=[move])
+                    EngineLine(
+                        depth=max(analysis.depth - 2, 1),
+                        multipv=1,
+                        score=score,
+                        moves=[move],
+                        wdl=(0, 0, 0),
+                    )
                 )
                 board.pop()
             analysis.lines.extend(additional_lines)
+            if analysis.lines:
+                analysis.wdl = analysis.lines[0].wdl
         self.updated.emit(analysis)
 
 
