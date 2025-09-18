@@ -59,8 +59,13 @@ class LiquidFrame(QtWidgets.QFrame):
 
 
 class GlassButton(QtWidgets.QPushButton):
-    def __init__(self, text: str, *args, **kwargs) -> None:
-        super().__init__(text, *args, **kwargs)
+    def __init__(
+        self,
+        text: str,
+        on_click: Optional[Callable[[], None]] = None,
+        parent: Optional[QtWidgets.QWidget] = None,
+    ) -> None:
+        super().__init__(text, parent)
         self.setCursor(QtCore.Qt.PointingHandCursor)
         self.setFixedHeight(32)
         self.setStyleSheet(
@@ -81,6 +86,8 @@ class GlassButton(QtWidgets.QPushButton):
             }
             """
         )
+        if on_click is not None:
+            self.clicked.connect(on_click)  # type: ignore[arg-type]
 
 
 class OverlayListWidget(QtWidgets.QListWidget):
