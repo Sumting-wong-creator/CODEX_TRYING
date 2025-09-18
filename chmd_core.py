@@ -122,8 +122,19 @@ APP_PATHS = AppPaths()
 # --------------------------------------------------------------------------------------
 
 
+WINDOWS_STOCKFISH_PATH = Path(
+    r"C:\Users\hyper\Downloads\stockfish-windows-x86-64-avx2\stockfish\stockfish-windows-x86-64-avx2.exe"
+)
+
+
+def default_engine_path() -> str:
+    if os.name == "nt":
+        return str(WINDOWS_STOCKFISH_PATH)
+    return "stockfish"
+
+
 DEFAULT_SETTINGS: Dict[str, Any] = {
-    "engine_path": "stockfish",
+    "engine_path": default_engine_path(),
     "engine_threads": 4,
     "engine_hash": 512,
     "multi_pv": 3,
@@ -1631,9 +1642,24 @@ def validate_fen(fen: str) -> bool:
 # --------------------------------------------------------------------------------------
 
 
+def resolve_engine_path(configured: str) -> str:
+    if os.name == "nt":
+        configured_path = Path(configured)
+        if configured_path.exists():
+            return str(configured_path)
+        if WINDOWS_STOCKFISH_PATH.exists():
+            resolved = str(WINDOWS_STOCKFISH_PATH)
+            if SETTINGS.get("engine_path") != resolved:
+                LOGGER.info("Using bundled Stockfish path at %s", resolved)
+                SETTINGS.set("engine_path", resolved)
+            return resolved
+    return configured
+
+
 class EngineSettings:
     def __init__(self) -> None:
-        self.path = SETTINGS.get("engine_path", "stockfish")
+        configured = SETTINGS.get("engine_path", default_engine_path())
+        self.path = resolve_engine_path(configured)
         self.threads = SETTINGS.get("engine_threads", 4)
         self.hash_size = SETTINGS.get("engine_hash", 512)
         self.multi_pv = SETTINGS.get("multi_pv", 3)
@@ -1641,7 +1667,8 @@ class EngineSettings:
 
     def refresh(self) -> None:
         LOGGER.debug("Refreshing engine settings")
-        self.path = SETTINGS.get("engine_path", self.path)
+        configured = SETTINGS.get("engine_path", self.path)
+        self.path = resolve_engine_path(configured)
         self.threads = SETTINGS.get("engine_threads", self.threads)
         self.hash_size = SETTINGS.get("engine_hash", self.hash_size)
         self.multi_pv = SETTINGS.get("multi_pv", self.multi_pv)

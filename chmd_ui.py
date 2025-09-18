@@ -477,7 +477,7 @@ class ChessBoardView(QtWidgets.QGraphicsView):
 
 
 class SettingsDialog(QtWidgets.QDialog):
-    def __init__(self, parent: QtWidgets.QWidget | None = None) -> None:
+    def __init__(self, parent: Optional[QtWidgets.QWidget] = None) -> None:
         super().__init__(parent)
         self.setWindowTitle("Settings")
         self.setModal(True)
@@ -839,7 +839,7 @@ class ClockWidget(LiquidFrame):
 
 
 class HotkeyDialog(QtWidgets.QDialog):
-    def __init__(self, parent: QtWidgets.QWidget | None = None) -> None:
+    def __init__(self, parent: Optional[QtWidgets.QWidget] = None) -> None:
         super().__init__(parent)
         self.setWindowTitle("Hotkeys")
         layout = QtWidgets.QVBoxLayout(self)
@@ -928,7 +928,7 @@ class StreakWidget(LiquidFrame):
 
 
 class OverlayInspector(QtWidgets.QDialog):
-    def __init__(self, parent: QtWidgets.QWidget | None = None) -> None:
+    def __init__(self, parent: Optional[QtWidgets.QWidget] = None) -> None:
         super().__init__(parent)
         self.setWindowTitle("Overlay Inspector")
         layout = QtWidgets.QVBoxLayout(self)
@@ -999,7 +999,7 @@ __all__.append("run_ui")
 
 
 class StatusToast(QtWidgets.QLabel):
-    def __init__(self, parent: QtWidgets.QWidget | None = None) -> None:
+    def __init__(self, parent: Optional[QtWidgets.QWidget] = None) -> None:
         super().__init__("", parent)
         self.setStyleSheet("background: rgba(0,0,0,160); color: white; padding: 6px 12px; border-radius: 8px;")
         self.timer = QtCore.QTimer(self)
