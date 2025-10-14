@@ -32,6 +32,7 @@ function init() {
     savePreferences();
   });
   port.onMessage.addListener(handlePortMessage);
+  autoResize();
 }
 
 function createInitialState() {
@@ -97,14 +98,24 @@ function handlePortMessage(message) {
       break;
     case 'complete':
       if (message.conversationId !== state.conversationId) return;
-      finalizeAssistant(message.finalText);
-      if (message.finalText) {
-        state.history.push({ role: 'assistant', text: message.finalText });
+      {
+        const finalOutput = message.finalText || pendingText;
+        finalizeAssistant(finalOutput);
+        if (finalOutput) {
+          state.history.push({ role: 'assistant', text: finalOutput });
+        }
+        if (message.promptFeedback?.blockReason && !finalOutput) {
+          appendStatus('HAWA was blocked from replying by safety policies.');
+        }
       }
       state.streaming = false;
       break;
     case 'status':
       if (message.conversationId && message.conversationId !== state.conversationId) return;
+      if (pendingBubble) {
+        const fallback = pendingText || 'HAWA could not respond.';
+        finalizeAssistant(fallback);
+      }
       appendStatus(message.message || 'Something went wrong.');
       state.streaming = false;
       break;
@@ -219,8 +230,6 @@ function runQuickAction(action) {
 function handleQuickActionMessage(message) {
   const basePrompt = message.action === 'summarize'
     ? 'Please summarize this page.'
-    : message.action === 'claim-epic'
-    ? 'Draft a short "Claim Epic" summary for this content.'
     : '';
   if (!basePrompt) return;
   const prompt = message.selection ? `Focus on this selection first:\n${message.selection}\n\n${basePrompt}` : basePrompt;

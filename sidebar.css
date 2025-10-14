@@ -1,12 +1,51 @@
 :root {
   color-scheme: light dark;
-  font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+  font-family: 'Segoe UI', system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+  --hawa-surface: #0f111a;
+  --hawa-elevated: #161b2c;
+  --hawa-border: rgba(255, 255, 255, 0.08);
+  --hawa-foreground: #f2f4ff;
+  --hawa-muted: rgba(242, 244, 255, 0.6);
+  --hawa-accent: #8b6bff;
+  --hawa-accent-strong: #60d0ff;
+  --hawa-user-bubble: rgba(139, 107, 255, 0.18);
+  --hawa-assistant-bubble: rgba(22, 26, 44, 0.92);
+  --hawa-code-bg: rgba(8, 10, 18, 0.82);
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    --hawa-surface: #f5f6ff;
+    --hawa-elevated: #ffffff;
+    --hawa-border: rgba(18, 21, 36, 0.12);
+    --hawa-foreground: #1d2033;
+    --hawa-muted: rgba(29, 32, 51, 0.6);
+    --hawa-accent: #6150ff;
+    --hawa-accent-strong: #3ca3ff;
+    --hawa-user-bubble: rgba(97, 80, 255, 0.12);
+    --hawa-assistant-bubble: rgba(255, 255, 255, 0.95);
+    --hawa-code-bg: rgba(16, 21, 42, 0.06);
+  }
+}
+
+* {
+  box-sizing: border-box;
 }
 
 body {
   margin: 0;
   background: var(--hawa-surface);
   color: var(--hawa-foreground);
+}
+
+button,
+textarea {
+  font: inherit;
+  color: inherit;
+}
+
+textarea {
+  resize: none;
 }
 
 .hawa-shell {
@@ -16,99 +55,106 @@ body {
   background: var(--hawa-surface);
   color: var(--hawa-foreground);
 }
+
 .hawa-shell.resetting {
-  animation: resetFade 0.35s ease;
+  animation: hawaReset 0.3s ease;
 }
 
 .hawa-header {
-  padding: 1.25rem 1.5rem 0.75rem;
+  padding: 1.25rem 1.5rem 1rem;
   display: flex;
-  justify-content: space-between;
   align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  border-bottom: 1px solid var(--hawa-border);
 }
 
 .hawa-title-group {
   display: flex;
   flex-direction: column;
-  gap: 0.35rem;
+  gap: 0.3rem;
 }
 
 .hawa-pill {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.4rem;
-  padding: 0.35rem 0.75rem;
+  align-self: flex-start;
+  padding: 0.4rem 0.85rem;
   border-radius: 999px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  font-size: 0.75rem;
   font-weight: 600;
-  background: linear-gradient(120deg, var(--hawa-accent), var(--hawa-accent-soft));
-  color: #fff;
-  letter-spacing: 0.08em;
+  background: rgba(139, 107, 255, 0.16);
+  border: 1px solid rgba(139, 107, 255, 0.28);
+  color: var(--hawa-foreground);
 }
 
 .hawa-subtitle {
   font-size: 0.85rem;
-  opacity: 0.75;
+  color: var(--hawa-muted);
 }
 
 .hawa-reset {
-  border: none;
-  border-radius: 12px;
-  padding: 0.5rem 1rem;
-  font-weight: 600;
-  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid var(--hawa-border);
+  background: var(--hawa-elevated);
   color: inherit;
+  padding: 0.45rem 0.9rem;
+  border-radius: 0.75rem;
+  font-weight: 600;
   cursor: pointer;
-  transition: background 0.2s ease;
+  transition: border-color 0.2s ease, transform 0.2s ease;
 }
 
-.hawa-reset:hover {
-  background: rgba(255, 255, 255, 0.12);
+.hawa-reset:hover,
+.hawa-reset:focus-visible {
+  border-color: var(--hawa-accent);
+  transform: translateY(-1px);
 }
 
 .hawa-modes {
-  margin: 0 1.5rem;
-  padding: 0.75rem;
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 0.75rem;
-  border-radius: 16px;
-  background: var(--hawa-panel);
+  margin: 1.1rem 1.5rem 0.5rem;
+  padding: 0.6rem;
+  display: flex;
+  gap: 0.6rem;
+  border-radius: 1rem;
+  background: var(--hawa-elevated);
+  border: 1px solid var(--hawa-border);
 }
 
 .mode-btn {
-  border: none;
-  border-radius: 14px;
-  padding: 0.75rem 0.9rem;
+  flex: 1;
+  border: 1px solid transparent;
+  border-radius: 0.85rem;
+  padding: 0.9rem;
   text-align: left;
   display: flex;
   flex-direction: column;
-  gap: 0.25rem;
-  background: transparent;
-  color: inherit;
+  gap: 0.35rem;
   cursor: pointer;
-  transition: background 0.25s ease, transform 0.2s ease;
+  background: transparent;
+  transition: background 0.2s ease, border-color 0.2s ease, transform 0.2s ease;
 }
 
 .mode-btn .mode-label {
-  font-weight: 600;
-  letter-spacing: 0.04em;
   text-transform: uppercase;
-  font-size: 0.8rem;
+  letter-spacing: 0.06em;
+  font-size: 0.78rem;
+  font-weight: 600;
 }
 
 .mode-btn .mode-caption {
-  font-size: 0.75rem;
-  opacity: 0.7;
+  font-size: 0.78rem;
+  color: var(--hawa-muted);
 }
 
 .mode-btn.active {
-  background: linear-gradient(135deg, rgba(103, 80, 255, 0.24), rgba(90, 255, 248, 0.18));
-  box-shadow: 0 12px 30px rgba(60, 30, 120, 0.25);
+  background: rgba(139, 107, 255, 0.16);
+  border-color: rgba(139, 107, 255, 0.4);
+  box-shadow: 0 10px 24px rgba(12, 16, 32, 0.18);
   transform: translateY(-2px);
 }
 
 .hawa-quick {
-  margin: 1rem 1.5rem 0;
+  margin: 0 1.5rem 0.75rem;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -117,21 +163,28 @@ body {
 
 .hawa-quick-btn {
   border: none;
+  background: linear-gradient(135deg, var(--hawa-accent), var(--hawa-accent-strong));
+  color: #fff;
+  padding: 0.55rem 1.25rem;
   border-radius: 999px;
-  padding: 0.55rem 1.2rem;
   font-weight: 600;
   cursor: pointer;
-  background: linear-gradient(120deg, var(--hawa-accent), var(--hawa-accent-soft));
-  color: #fff;
-  box-shadow: 0 12px 24px rgba(103, 80, 255, 0.35);
+  box-shadow: 0 12px 24px rgba(24, 30, 70, 0.25);
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.hawa-quick-btn:hover,
+.hawa-quick-btn:focus-visible {
+  transform: translateY(-1px);
+  box-shadow: 0 14px 28px rgba(24, 30, 70, 0.3);
 }
 
 .hawa-toggle {
   display: inline-flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: 0.45rem;
   font-size: 0.8rem;
-  opacity: 0.85;
+  color: var(--hawa-muted);
 }
 
 .hawa-toggle input {
@@ -142,52 +195,66 @@ body {
 .hawa-chat {
   flex: 1;
   overflow-y: auto;
-  padding: 1rem 1.5rem 0;
+  padding: 0.75rem 1.5rem 0;
 }
 
 .hawa-log {
   display: flex;
   flex-direction: column;
-  gap: 1rem;
+  gap: 0.9rem;
 }
 
 .chat-bubble {
-  border-radius: 18px;
-  padding: 0.85rem 1rem;
   max-width: 90%;
+  padding: 0.85rem 1rem;
+  border-radius: 1rem;
+  background: var(--hawa-assistant-bubble);
+  border: 1px solid rgba(255, 255, 255, 0.06);
   line-height: 1.5;
-  box-shadow: 0 12px 32px rgba(16, 16, 40, 0.22);
-  animation: fadeIn 0.3s ease;
+  box-shadow: 0 10px 28px rgba(10, 14, 24, 0.18);
+  animation: hawaBubble 0.25s ease;
 }
 
 .chat-bubble.user {
   margin-left: auto;
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--hawa-user-bubble);
+  border: 1px solid rgba(139, 107, 255, 0.28);
+  color: inherit;
 }
 
 .chat-bubble.assistant {
-  background: rgba(103, 80, 255, 0.16);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  align-self: flex-start;
 }
 
 .chat-bubble .bubble-author {
-  font-size: 0.75rem;
+  font-size: 0.72rem;
   text-transform: uppercase;
   letter-spacing: 0.08em;
-  opacity: 0.7;
-  margin-bottom: 0.5rem;
+  color: var(--hawa-muted);
+  margin-bottom: 0.45rem;
 }
 
 .chat-bubble pre {
-  background: rgba(15, 15, 35, 0.8);
+  background: var(--hawa-code-bg);
   padding: 0.75rem;
-  border-radius: 12px;
+  border-radius: 0.75rem;
   overflow-x: auto;
 }
 
+.chat-bubble code {
+  font-family: 'SFMono-Regular', Menlo, Consolas, 'Liberation Mono', monospace;
+}
+
 .hawa-composer {
-  padding: 1rem 1.5rem 1.5rem;
-  background: linear-gradient(0deg, rgba(0, 0, 0, 0.12), transparent 60%);
+  padding: 1rem 1.5rem 1.4rem;
+  border-top: 1px solid var(--hawa-border);
+  background: linear-gradient(180deg, rgba(0, 0, 0, 0) 0%, rgba(8, 10, 18, 0.18) 100%);
+}
+
+@media (prefers-color-scheme: light) {
+  .hawa-composer {
+    background: linear-gradient(180deg, rgba(245, 246, 255, 0) 0%, rgba(245, 246, 255, 0.95) 100%);
+  }
 }
 
 #composerForm {
@@ -199,60 +266,55 @@ body {
 .hawa-input {
   flex: 1;
   position: relative;
-  display: block;
 }
 
 .hawa-input textarea {
   width: 100%;
-  border-radius: 18px;
-  padding: 0.9rem 1rem;
-  font: inherit;
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  background: rgba(12, 12, 20, 0.6);
+  border-radius: 0.9rem;
+  padding: 0.85rem 1rem;
+  border: 1px solid var(--hawa-border);
+  background: var(--hawa-elevated);
   color: inherit;
-  resize: none;
   min-height: 48px;
-  max-height: 160px;
+  max-height: 170px;
 }
 
-.hawa-input textarea:focus {
-  outline: 2px solid rgba(103, 80, 255, 0.6);
-  background: rgba(16, 16, 28, 0.85);
-}
-
-.input-placeholder {
-  position: absolute;
-  inset: 0.9rem 1rem auto;
-  font-size: 0.85rem;
-  opacity: 0.6;
-  pointer-events: none;
+.hawa-input textarea:focus-visible {
+  outline: 2px solid rgba(139, 107, 255, 0.4);
 }
 
 .send-btn {
   border: none;
+  padding: 0.6rem 1.35rem;
   border-radius: 999px;
-  padding: 0.55rem 1.2rem;
   font-weight: 600;
   cursor: pointer;
-  background: linear-gradient(120deg, var(--hawa-accent), var(--hawa-accent-soft));
+  background: linear-gradient(135deg, var(--hawa-accent), var(--hawa-accent-strong));
   color: #fff;
-  box-shadow: 0 10px 24px rgba(103, 80, 255, 0.35);
+  box-shadow: 0 12px 22px rgba(24, 30, 70, 0.28);
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.send-btn:hover,
+.send-btn:focus-visible {
+  transform: translateY(-1px);
+  box-shadow: 0 16px 26px rgba(24, 30, 70, 0.32);
 }
 
 .token-stream {
-  opacity: 0.85;
+  opacity: 0.9;
 }
 
 .status-line {
   font-size: 0.8rem;
-  opacity: 0.7;
-  padding: 0 1rem;
+  color: var(--hawa-muted);
+  padding: 0 0.25rem;
 }
 
-@keyframes fadeIn {
+@keyframes hawaBubble {
   from {
     opacity: 0;
-    transform: translateY(4px);
+    transform: translateY(6px);
   }
   to {
     opacity: 1;
@@ -260,41 +322,12 @@ body {
   }
 }
 
-@keyframes resetFade {
+@keyframes hawaReset {
   from {
-    opacity: 0.5;
+    opacity: 0.6;
   }
   to {
     opacity: 1;
-  }
-}
-
-@media (prefers-color-scheme: light) {
-  body {
-    background: var(--hawa-surface);
-    color: var(--hawa-foreground);
-  }
-  .hawa-reset {
-    background: rgba(103, 80, 255, 0.12);
-  }
-  .chat-bubble.user {
-    background: rgba(103, 80, 255, 0.15);
-  }
-  .chat-bubble.assistant {
-    background: rgba(249, 247, 255, 0.9);
-    color: #1b1735;
-    border-color: rgba(103, 80, 255, 0.18);
-  }
-  .hawa-input textarea {
-    background: rgba(255, 255, 255, 0.95);
-    border-color: rgba(103, 80, 255, 0.25);
-    color: #1f1a33;
-  }
-  .hawa-input textarea:focus {
-    background: #fff;
-  }
-  .hawa-composer {
-    background: linear-gradient(0deg, rgba(255, 255, 255, 0.9), rgba(255, 255, 255, 0));
   }
 }
 
@@ -302,25 +335,20 @@ body {
   .hawa-header {
     flex-direction: column;
     align-items: flex-start;
-    gap: 0.75rem;
+  }
+
+  .hawa-reset {
+    align-self: flex-end;
   }
 }
 
-:root,
-:root.light {
-  --hawa-surface: #0f111b;
-  --hawa-foreground: #f4f6fb;
-  --hawa-panel: rgba(255, 255, 255, 0.04);
-  --hawa-accent: #6750ff;
-  --hawa-accent-soft: #56c9ff;
-}
-
-@media (prefers-color-scheme: light) {
-  :root {
-    --hawa-surface: #f5f3ff;
-    --hawa-foreground: #1d1735;
-    --hawa-panel: rgba(103, 80, 255, 0.08);
-    --hawa-accent: #6750ff;
-    --hawa-accent-soft: #6ad7ff;
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
   }
 }
