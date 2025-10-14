@@ -1,6 +1,6 @@
-# Agentic Web Assistant
+# HAWA (Hyper Agentic Web Assistant)
 
-Agentic Web Assistant is a Manifest V3 Chrome extension that provides an offline-first Gemini 2.5 Flash copilot for browsing. All processing happens locally except streaming calls to the Gemini API.
+HAWA (Hyper Agentic Web Assistant) is a Manifest V3 Chrome extension that provides an offline-first Gemini 2.5 Flash copilot for browsing. All processing happens locally except streaming calls to the Gemini API.
 
 ## Installation
 
@@ -34,15 +34,15 @@ The extension requests the following permissions:
 
 Add your Gemini API key in the options page. You can encrypt it with a custom passphrase; the key can be unlocked for 30 minutes using AES-GCM (PBKDF2 key derivation). No key data leaves your machine.
 
-## Hebrew & RTL Tips
-
-- All chat bubbles use `dir="auto"`, and the sidebar fully supports RTL scripts like Hebrew.
-- Currency detection surfaces ₪, $, and “חינם” pricing cues inside the page context summary.
-
 ## Troubleshooting
 
 - If streaming stalls, click **Stop** and resend your message.
 - Missing API key? Open the options page and ensure it is saved or unlocked.
 - To clear history, start a new chat from the sidebar header.
 
-Enjoy safer, more transparent browsing with Agentic Web Assistant!
+## Language Defaults
+
+- The assistant responds in English by default to keep guidance consistent. Ask explicitly if you prefer another language.
+- Interface copy is written in English while still respecting `dir="auto"` for accessibility.
+
+Enjoy safer, more transparent browsing with HAWA!

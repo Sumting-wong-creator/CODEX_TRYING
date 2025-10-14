@@ -13,7 +13,7 @@ closeBtn.addEventListener('click', () => {
 });
 
 function renderSummary(summary) {
-  summaryLine.textContent = summary.line || 'Agentic overview unavailable';
+  summaryLine.textContent = summary.line || 'HAWA overview unavailable';
   bulletsEl.innerHTML = '';
   (summary.bullets || []).slice(0, 3).forEach(item => {
     const li = document.createElement('li');

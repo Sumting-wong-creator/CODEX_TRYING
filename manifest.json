@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
-  "name": "Agentic Web Assistant",
-  "description": "Offline-first agentic assistant with Gemini 2.5 Flash streaming integration.",
+  "name": "HAWA (Hyper Agentic Web Assistant)",
+  "description": "Offline-first Hyper Agentic Web Assistant with Gemini 2.5 Flash streaming integration.",
   "version": "1.0.0",
   "permissions": [
     "activeTab",
@@ -24,7 +24,7 @@
     "default_path": "sidebar.html"
   },
   "action": {
-    "default_title": "Agentic Web Assistant"
+    "default_title": "HAWA (Hyper Agentic Web Assistant)"
   },
   "options_page": "options.html",
   "content_scripts": [
