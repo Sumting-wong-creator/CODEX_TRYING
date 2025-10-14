@@ -5,6 +5,7 @@ const contentPorts = new Map();
 const activeSessions = new Map();
 const toolResolvers = new Map();
 const TOOL_WHITELIST = new Set(['readPage', 'navigate', 'click', 'type', 'scrollTo']);
+const DEFAULT_GEMINI_MODEL = 'gemini-2.5-flash';
 
 chrome.runtime.onInstalled.addListener(() => {
   chrome.contextMenus.create({
@@ -126,7 +127,19 @@ async function handleSidebarMessage(tabId, port, message) {
 async function startSession(sourceTabId, port, payload) {
   stopSession(payload.conversationId);
 
-  const apiKey = await getApiKey();
+  let apiKey;
+  try {
+    apiKey = await getApiKey();
+  } catch (error) {
+    console.error('[HAWA] Unable to start session without API key', error);
+    port.postMessage({
+      type: 'status',
+      conversationId: payload.conversationId,
+      status: 'error',
+      message: error?.message || 'Gemini API key unavailable.'
+    });
+    return;
+  }
   const sessionId = crypto.randomUUID();
   const controller = new AbortController();
   const mode = payload.mode || 'ask';
@@ -216,16 +229,31 @@ function stopSession(conversationId) {
 
 async function callGemini({ session, apiKey, contents, allowInstructions }) {
   const port = session.port;
-  return await new Promise((resolve, reject) => {
-    streamGemini({
-      apiKey,
-      payload: buildPayload(contents, allowInstructions),
-      signal: session.controller.signal,
-      onToken: (token) => port.postMessage({ type: 'token', conversationId: session.conversationId, token }),
-      onComplete: resolve,
-      onError: reject
+  const payload = buildPayload(contents, allowInstructions);
+
+  try {
+    return await new Promise((resolve, reject) => {
+      streamGemini({
+        apiKey,
+        payload,
+        model: DEFAULT_GEMINI_MODEL,
+        signal: session.controller.signal,
+        onToken: (token) => port.postMessage({ type: 'token', conversationId: session.conversationId, token }),
+        onComplete: resolve,
+        onError: reject
+      });
     });
-  });
+  } catch (error) {
+    if (error?.name === 'AbortError') {
+      throw error;
+    }
+    console.warn('[HAWA] Streaming Gemini request failed, retrying with non-streaming fallback', error);
+    const fallback = await generateGeminiOnce({ apiKey, payload, signal: session.controller.signal });
+    if (fallback.text) {
+      port.postMessage({ type: 'token', conversationId: session.conversationId, token: fallback.text });
+    }
+    return fallback;
+  }
 }
 
 function buildPayload(contents, allowInstructions) {
@@ -303,6 +331,42 @@ function buildPayload(contents, allowInstructions) {
       topP: 0.9,
       maxOutputTokens: 2048
     }
+  };
+}
+
+async function generateGeminiOnce({ apiKey, payload, signal }) {
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(DEFAULT_GEMINI_MODEL)}:generateContent?key=${encodeURIComponent(apiKey)}`;
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+    signal
+  });
+
+  if (!response.ok) {
+    const message = await response.text().catch(() => '');
+    throw new Error(message || `Gemini responded with ${response.status}`);
+  }
+
+  const json = await response.json();
+  const candidates = Array.isArray(json.candidates) ? json.candidates : [];
+  const primary = candidates[0] || null;
+  const parts = primary?.content?.parts || [];
+  const text = parts.map((part) => (typeof part.text === 'string' ? part.text : '')).join('');
+  const toolCalls = [];
+
+  for (const part of parts) {
+    const fn = part.functionCall || part.function_call;
+    if (fn) {
+      toolCalls.push(fn);
+    }
+  }
+
+  return {
+    text,
+    candidate: primary,
+    promptFeedback: json.promptFeedback || null,
+    toolCalls
   };
 }
 
