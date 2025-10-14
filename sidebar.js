@@ -9,6 +9,7 @@ const tempSlider = document.getElementById('temperature');
 const tempValue = document.getElementById('temperature-value');
 const allowInstructionsToggle = document.getElementById('allow-instructions');
 const modelSelect = document.getElementById('model');
+const quickActionButtons = document.querySelectorAll('.quick-action-btn');
 
 const port = chrome.runtime.connect({ name: 'sidebar' });
 let conversationId = crypto.randomUUID();
@@ -100,7 +101,15 @@ stopBtn.addEventListener('click', () => {
   stopBtn.disabled = true;
 });
 
-newChatBtn.addEventListener('click', startNewChat);
+newChatBtn.addEventListener('click', () => startNewChat());
+quickActionButtons.forEach(button => {
+  button.addEventListener('click', () => {
+    const action = button.dataset.action;
+    if (action) {
+      runQuickAction(action);
+    }
+  });
+});
 
 function sendPrompt(prompt) {
   appendMessage('user', prompt);
@@ -162,13 +171,18 @@ function addToHistory(role, text) {
   }
 }
 
-function startNewChat() {
+function startNewChat({ announce = true } = {}) {
   history = [];
   conversationId = crypto.randomUUID();
   messagesEl.innerHTML = '';
   currentAssistantNode = null;
   assistantBuffer = '';
-  renderSystemMessage('New chat started.');
+  streaming = false;
+  stopBtn.disabled = true;
+  promptEl.value = '';
+  if (announce) {
+    renderSystemMessage('New chat started.');
+  }
 }
 
 function renderSystemMessage(text, status = 'info') {
@@ -186,18 +200,36 @@ function persistSettings() {
 
 function handleQuickAction(message) {
   const { action, selection } = message;
-  startNewChat();
-  let prompt = '';
+  runQuickAction(action, selection);
+}
+
+function runQuickAction(action, selection = '') {
+  const prompt = buildQuickActionPrompt(action, selection);
+  if (!prompt) return;
+  startNewChat({ announce: false });
   if (action === 'summarize') {
-    prompt = selection ? `Summarize the selected content:\n\n${selection}` : 'Summarize the current page and highlight key points.';
+    renderSystemMessage('Summarizing this page with the latest context…');
   } else if (action === 'claim-epic') {
-    prompt = 'Create a concise, testable epic claim for this page including goals, acceptance criteria, and risks.';
-    if (selection) {
-      prompt += `\n\nSource selection:\n${selection}`;
-    }
+    renderSystemMessage('Drafting an epic claim based on this page…');
   }
-  promptEl.value = prompt;
-  promptEl.focus();
+  sendPrompt(prompt);
+}
+
+function buildQuickActionPrompt(action, selection = '') {
+  if (action === 'summarize') {
+    if (selection) {
+      return `Summarize the selected content with clear bullets and a headline. Selection:\n\n${selection}`;
+    }
+    return 'Read the current page using available tools and produce a crisp summary with highlights and action items if present.';
+  }
+  if (action === 'claim-epic') {
+    let prompt = 'Use the page context to draft a concise epic claim with goal, acceptance criteria, and notable risks or dependencies.';
+    if (selection) {
+      prompt += `\n\nReference this selection as primary source material:\n${selection}`;
+    }
+    return prompt;
+  }
+  return '';
 }
 
 function saveRecentChat() {

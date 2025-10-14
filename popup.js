@@ -3,11 +3,14 @@ const claimEpicBtn = document.getElementById('claim-epic');
 const openSidebarBtn = document.getElementById('open-sidebar');
 const recentChatsEl = document.getElementById('recent-chats');
 
+document.addEventListener('DOMContentLoaded', () => {
+  ensureSidebarOpen();
+  renderRecentChats();
+});
+
 summarizeBtn.addEventListener('click', () => triggerQuickAction('summarize'));
 claimEpicBtn.addEventListener('click', () => triggerQuickAction('claim-epic'));
-openSidebarBtn.addEventListener('click', openSidebar);
-
-renderRecentChats();
+openSidebarBtn.addEventListener('click', () => openSidebar({ closeAfter: true }));
 
 async function triggerQuickAction(action) {
   const tab = await getActiveTab();
@@ -17,11 +20,17 @@ async function triggerQuickAction(action) {
   window.close();
 }
 
-async function openSidebar() {
+async function ensureSidebarOpen() {
+  await openSidebar({ closeAfter: false });
+}
+
+async function openSidebar({ closeAfter } = {}) {
   const tab = await getActiveTab();
   if (!tab?.id) return;
   await chrome.sidePanel.open({ tabId: tab.id }).catch(() => {});
-  window.close();
+  if (closeAfter) {
+    window.close();
+  }
 }
 
 async function renderRecentChats() {

@@ -1,13 +1,15 @@
 import { streamGemini } from './utils/stream.js';
 
+const NOTIFICATION_ICON = 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAxMjggMTI4Ij4KICA8ZGVmcz4KICAgIDxsaW5lYXJHcmFkaWVudCBpZD0iZyIgeDE9IjAiIHgyPSIxIiB5MT0iMSIgeTI9IjAiPgogICAgICA8c3RvcCBvZmZzZXQ9IjAiIHN0b3AtY29sb3I9IiMxYjI4MzgiLz4KICAgICAgPHN0b3Agb2Zmc2V0PSIxIiBzdG9wLWNvbG9yPSIjNGY1ZDc1Ii8+CiAgICA8L2xpbmVhckdyYWRpZW50PgogIDwvZGVmcz4KICA8cmVjdCB3aWR0aD0iMTI4IiBoZWlnaHQ9IjEyOCIgZmlsbD0idXJsKCNnKSIgcng9IjI4Ii8+CiAgPHBhdGggZmlsbD0iIzliYmNmZiIgZD0iTTY0IDI2YTMwIDMwIDAgMCAwLTMwIDMwdjIwLjNsLTYuNyAxMmE0IDQgMCAwIDAgMy41IDUuOUg5Ny4yYTQgNCAwIDAgMCAzLjUtNS45bC02LjctMTJWNTZhMzAgMzAgMCAwIDAtMzAtMzBabTAgNzZhMTAgMTAgMCAwIDAgOS43LTcuMkg1NC4zQTEwIDEwIDAgMCAwIDY0IDEwMloiLz4KPC9zdmc+';
+
 const sidebarPorts = new Map();
 const contentPorts = new Map();
 const activeStreams = new Map();
-const NOTIFICATION_ICON = 'data:image/svg+xml;utf8,' + encodeURIComponent(`<?xml version="1.0" encoding="UTF-8"?>\n<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Agentic Web Assistant">\n  <defs>\n    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">\n      <stop offset="0" stop-color="#4285f4"/>\n      <stop offset="1" stop-color="#a142f4"/>\n    </linearGradient>\n  </defs>\n  <rect width="64" height="64" rx="16" fill="#0b1120"/>\n  <circle cx="32" cy="32" r="20" fill="url(#g)"/>\n  <path d="M21 35c3 6 7 9 11 9s8-3 11-9" fill="none" stroke="#fff" stroke-width="4" stroke-linecap="round"/>\n  <circle cx="25" cy="26" r="3" fill="#fff"/>\n  <circle cx="39" cy="26" r="3" fill="#fff"/>\n</svg>`);
 
 const TOOL_WHITELIST = new Set(['readPage', 'navigate', 'click', 'type', 'scrollTo']);
 
 chrome.runtime.onInstalled.addListener(() => {
+  ensureSidePanelBehavior();
   chrome.contextMenus.create({
     id: 'awa-summarize',
     title: 'Summarize with Agentic Web Assistant',
@@ -18,6 +20,10 @@ chrome.runtime.onInstalled.addListener(() => {
     title: 'Claim Epic with Agentic Web Assistant',
     contexts: ['page', 'selection']
   });
+});
+
+chrome.runtime.onStartup?.addListener(() => {
+  ensureSidePanelBehavior();
 });
 
 chrome.contextMenus.onClicked.addListener(async (info, tab) => {
@@ -428,3 +434,19 @@ function notify(idSuffix, message) {
     console.warn('Notification error', error);
   }
 }
+
+function ensureSidePanelBehavior() {
+  if (!chrome.sidePanel) return;
+  if (chrome.sidePanel.setPanelBehavior) {
+    chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(() => {});
+  }
+  if (chrome.sidePanel.setOptions) {
+    try {
+      chrome.sidePanel.setOptions({ enabled: true, path: 'sidebar.html' }).catch(() => {});
+    } catch (error) {
+      console.warn('Failed to set default side panel options', error);
+    }
+  }
+}
+
+ensureSidePanelBehavior();

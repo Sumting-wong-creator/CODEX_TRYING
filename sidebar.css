@@ -88,6 +88,35 @@ body {
   cursor: not-allowed;
 }
 
+.quick-actions {
+  display: flex;
+  gap: 10px;
+  padding: 12px 20px;
+  background: var(--awa-bg);
+  border-bottom: 1px solid var(--awa-border);
+  flex-wrap: wrap;
+}
+
+.quick-action-btn {
+  border: 1px solid var(--awa-border);
+  background: var(--awa-surface);
+  color: var(--awa-text);
+  padding: 8px 14px;
+  border-radius: 12px;
+  font-size: 0.85rem;
+  cursor: pointer;
+  transition: background 0.2s ease, transform 0.15s ease;
+}
+
+.quick-action-btn:hover {
+  background: rgba(127, 86, 218, 0.12);
+  transform: translateY(-1px);
+}
+
+.quick-action-btn:active {
+  transform: translateY(0);
+}
+
 .controls {
   display: flex;
   gap: 14px;

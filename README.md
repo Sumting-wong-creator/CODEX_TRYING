@@ -7,7 +7,9 @@ Agentic Web Assistant is a Manifest V3 Chrome extension that provides an offline
 1. Open `chrome://extensions/` in Chrome or Edge.
 2. Enable **Developer mode** in the top-right corner.
 3. Click **Load unpacked** and select this folder.
-4. Pin the extension to keep quick actions handy.
+4. Pin the extension to keep the toolbar icon handy.
+
+Once loaded, clicking the toolbar icon opens the Chrome side panel with the assistant. The quick actions live at the top of the sidebar so you can summarize the current page or draft an epic in one tap. Right-click the icon and choose **Options** at any time to configure your Gemini 2.5 Flash API key.
 
 ## Permissions
 

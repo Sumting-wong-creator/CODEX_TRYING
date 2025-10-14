@@ -24,8 +24,7 @@
     "default_path": "sidebar.html"
   },
   "action": {
-    "default_title": "Agentic Web Assistant",
-    "default_popup": "popup.html"
+    "default_title": "Agentic Web Assistant"
   },
   "options_page": "options.html",
   "content_scripts": [
