@@ -1,5 +1,4 @@
 const summarizeBtn = document.getElementById('summarize');
-const claimEpicBtn = document.getElementById('claim-epic');
 const openSidebarBtn = document.getElementById('open-sidebar');
 const recentChatsEl = document.getElementById('recent-chats');
 
@@ -9,12 +8,12 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 summarizeBtn.addEventListener('click', () => triggerQuickAction('summarize'));
-claimEpicBtn.addEventListener('click', () => triggerQuickAction('claim-epic'));
 openSidebarBtn.addEventListener('click', () => openSidebar({ closeAfter: true }));
 
 async function triggerQuickAction(action) {
   const tab = await getActiveTab();
   if (!tab?.id) return;
+  await chrome.runtime.sendMessage({ type: 'queue-quick-action', tabId: tab.id, action, selection: '' }).catch(() => {});
   await chrome.sidePanel.open({ tabId: tab.id }).catch(() => {});
   chrome.tabs.sendMessage(tab.id, { type: 'sidebar-open-request', action });
   window.close();
@@ -44,7 +43,7 @@ async function renderRecentChats() {
       const tab = await getActiveTab();
       if (!tab?.id) return;
       await chrome.sidePanel.open({ tabId: tab.id }).catch(() => {});
-      chrome.runtime.sendMessage({ type: 'trigger-topbar', tabId: tab.id, summary: { line: chat.title, bullets: ['Reopen sidebar to continue.'] } });
+      chrome.runtime.sendMessage({ type: 'trigger-topbar', tabId: tab.id, summary: { line: chat.title, bullets: ['Open the sidebar to continue with HAWA.'] } });
       window.close();
     });
     recentChatsEl.appendChild(li);

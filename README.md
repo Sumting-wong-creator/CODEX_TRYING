@@ -9,7 +9,7 @@ HAWA (Hyper Agentic Web Assistant) is a Manifest V3 Chrome extension that provid
 3. Click **Load unpacked** and select this folder.
 4. Pin the extension to keep the toolbar icon handy.
 
-Once loaded, clicking the toolbar icon opens the Chrome side panel with the assistant. The quick actions live at the top of the sidebar so you can summarize the current page or draft an epic in one tap. Right-click the icon and choose **Options** at any time to configure your Gemini 2.5 Flash API key.
+Once loaded, clicking the toolbar icon opens the Chrome side panel with HAWA. The redesigned chat bubble keeps things minimal and offers two modes: **Ask** for page-aware answers, and **Agent** for hands-on automation in a dedicated workspace tab. Right-click the icon and choose **Options** at any time to configure your Gemini 2.5 Flash API key.
 
 ## Permissions
 
@@ -19,9 +19,15 @@ The extension requests the following permissions:
 - `scripting` – injects the sidebar UI, topbar, and content script helpers.
 - `storage` – stores your settings, encrypted API key, and recent chats locally.
 - `sidePanel` – opens the persistent chat panel.
-- `contextMenus` – exposes “Summarize” and “Claim Epic” actions in the page menu.
+- `contextMenus` – exposes a “Summarize with HAWA” action in the page menu.
 - `notifications` – used for safety and unlock reminders.
 - Host permissions (`https://*/*`, `http://*/*`) – required so the assistant can read and act on any page you allow.
+
+## Ask & Agent modes
+
+- **Ask** mode stays anchored to the page you are viewing. HAWA reads headings, selections, and metadata with user consent to answer questions clearly in English.
+- **Agent** mode opens a fresh tab with a neon edge overlay and an `E STOP` control in the top-left corner. You can halt automation at any time; the overlay collapses automatically once the task completes.
+- The chat composer animates between modes, and the side panel remembers your last preference per tab.
 
 ## Safety & Guardrails
 

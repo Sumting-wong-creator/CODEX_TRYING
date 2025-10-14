@@ -5,11 +5,10 @@ const promptEl = document.getElementById('prompt');
 const formEl = document.getElementById('composer');
 const stopBtn = document.getElementById('stop-stream');
 const newChatBtn = document.getElementById('new-chat');
-const tempSlider = document.getElementById('temperature');
-const tempValue = document.getElementById('temperature-value');
 const allowInstructionsToggle = document.getElementById('allow-instructions');
-const modelSelect = document.getElementById('model');
+const modeTabs = Array.from(document.querySelectorAll('.mode-tab'));
 const quickActionButtons = document.querySelectorAll('.quick-action-btn');
+const sendBtn = document.getElementById('send');
 
 const port = chrome.runtime.connect({ name: 'sidebar' });
 let conversationId = crypto.randomUUID();
@@ -17,30 +16,74 @@ let history = [];
 let streaming = false;
 let assistantBuffer = '';
 let currentAssistantNode = null;
+let currentMode = 'ask';
 let settings = {
-  allowInstructions: false,
-  temperature: 0.4,
-  model: 'models/gemini-2.5-flash'
+  allowInstructions: false
 };
 
 init();
 
 function init() {
+  setMode(currentMode, { silent: true });
   chrome.storage.local.get(['settings']).then(({ settings: storedSettings }) => {
     if (storedSettings) {
       settings = { ...settings, ...storedSettings };
       allowInstructionsToggle.checked = !!settings.allowInstructions;
-      tempSlider.value = settings.temperature?.toString() ?? '0.4';
-      tempValue.textContent = parseFloat(tempSlider.value).toFixed(1);
     }
-    modelSelect.value = settings.model || 'models/gemini-2.5-flash';
   });
   chrome.storage.local.get(['recentChats']).then(({ recentChats }) => {
     if (recentChats?.length) {
-      renderSystemMessage('Loaded recent chat context. Start typing to continue.');
+      renderSystemMessage('Welcome back. Continue where you left off or start something new.');
+    } else {
+      renderSystemMessage('HAWA is ready. Ask a question or let her explore in Agent mode.');
     }
   });
+  sendBtn.disabled = true;
 }
+
+modeTabs.forEach(tab => {
+  tab.addEventListener('click', () => {
+    const mode = tab.dataset.mode;
+    if (mode && mode !== currentMode) {
+      setMode(mode);
+    }
+  });
+});
+
+promptEl.addEventListener('input', () => {
+  autoSizePrompt();
+  sendBtn.disabled = !promptEl.value.trim();
+});
+
+autoSizePrompt();
+
+allowInstructionsToggle.addEventListener('change', persistSettings);
+
+formEl.addEventListener('submit', event => {
+  event.preventDefault();
+  if (streaming) return;
+  const prompt = promptEl.value.trim();
+  if (!prompt) return;
+  sendPrompt(prompt);
+});
+
+stopBtn.addEventListener('click', () => {
+  port.postMessage({ type: 'stop-request' });
+  streaming = false;
+  stopBtn.disabled = true;
+  sendBtn.disabled = !promptEl.value.trim();
+});
+
+newChatBtn.addEventListener('click', () => startNewChat());
+
+quickActionButtons.forEach(button => {
+  button.addEventListener('click', () => {
+    const action = button.dataset.action;
+    if (action) {
+      runQuickAction(action);
+    }
+  });
+});
 
 port.onMessage.addListener(message => {
   if (!message) return;
@@ -58,15 +101,17 @@ port.onMessage.addListener(message => {
       stopBtn.disabled = true;
       addToHistory('assistant', assistantBuffer);
       saveRecentChat();
+      sendBtn.disabled = !promptEl.value.trim();
       break;
     case 'status':
       renderSystemMessage(message.message, message.status);
       streaming = false;
       stopBtn.disabled = true;
+      sendBtn.disabled = !promptEl.value.trim();
       break;
     case 'tool-response':
       if (message.tool === 'readPage') {
-        renderSystemMessage('Page context shared with the assistant.');
+        renderSystemMessage('Shared fresh page context with HAWA.');
       }
       break;
     case 'quick-action':
@@ -77,39 +122,23 @@ port.onMessage.addListener(message => {
   }
 });
 
-formEl.addEventListener('submit', event => {
-  event.preventDefault();
-  if (streaming) return;
-  const prompt = promptEl.value.trim();
-  if (!prompt) return;
-  sendPrompt(prompt);
-});
-
-tempSlider.addEventListener('input', () => {
-  tempValue.textContent = parseFloat(tempSlider.value).toFixed(1);
-});
-
-tempSlider.addEventListener('change', persistSettings);
-allowInstructionsToggle.addEventListener('change', () => {
-  persistSettings();
-});
-modelSelect.addEventListener('change', persistSettings);
-
-stopBtn.addEventListener('click', () => {
-  port.postMessage({ type: 'stop-request' });
-  streaming = false;
-  stopBtn.disabled = true;
-});
-
-newChatBtn.addEventListener('click', () => startNewChat());
-quickActionButtons.forEach(button => {
-  button.addEventListener('click', () => {
-    const action = button.dataset.action;
-    if (action) {
-      runQuickAction(action);
-    }
+function setMode(mode, { silent = false } = {}) {
+  currentMode = mode === 'agent' ? 'agent' : 'ask';
+  document.documentElement.dataset.mode = currentMode;
+  modeTabs.forEach(tab => {
+    const active = tab.dataset.mode === currentMode;
+    tab.classList.toggle('active', active);
+    tab.setAttribute('aria-selected', active ? 'true' : 'false');
   });
-});
+  promptEl.placeholder = currentMode === 'agent'
+    ? 'Describe the task for HAWA to perform in a fresh workspace…'
+    : 'Ask HAWA…';
+  if (!silent) {
+    renderSystemMessage(currentMode === 'agent'
+      ? 'Agent mode engages a dedicated workspace tab. HAWA will narrate each action and wait for your go-ahead.'
+      : 'Ask mode keeps HAWA focused on this page. Provide context or ask for help.');
+  }
+}
 
 function sendPrompt(prompt) {
   appendMessage('user', prompt);
@@ -117,18 +146,19 @@ function sendPrompt(prompt) {
   currentAssistantNode = appendMessage('assistant', '');
   streaming = true;
   stopBtn.disabled = false;
+  sendBtn.disabled = true;
   const context = history.map(item => ({ ...item }));
   const request = {
     conversationId,
     prompt,
     history: context,
-    temperature: parseFloat(tempSlider.value),
     allowInstructions: allowInstructionsToggle.checked,
-    model: modelSelect.value
+    mode: currentMode
   };
   port.postMessage({ type: 'start-request', request });
   addToHistory('user', prompt);
   promptEl.value = '';
+  autoSizePrompt();
 }
 
 function ensureAssistantMessage() {
@@ -149,7 +179,7 @@ function appendMessage(role, text) {
   li.className = `message ${role}`;
   const roleEl = document.createElement('div');
   roleEl.className = 'role';
-  roleEl.textContent = role === 'assistant' ? 'Assistant' : role === 'system' ? 'System' : 'You';
+  roleEl.textContent = role === 'assistant' ? 'HAWA' : role === 'system' ? 'System' : 'You';
   const content = document.createElement('div');
   content.className = 'content';
   content.dir = 'auto';
@@ -180,8 +210,11 @@ function startNewChat({ announce = true } = {}) {
   streaming = false;
   stopBtn.disabled = true;
   promptEl.value = '';
+  autoSizePrompt();
+  document.body.classList.add('chat-resetting');
+  setTimeout(() => document.body.classList.remove('chat-resetting'), 480);
   if (announce) {
-    renderSystemMessage('New chat started.');
+    renderSystemMessage('New chat started. HAWA is listening.');
   }
 }
 
@@ -192,8 +225,6 @@ function renderSystemMessage(text, status = 'info') {
 
 function persistSettings() {
   settings.allowInstructions = allowInstructionsToggle.checked;
-  settings.temperature = parseFloat(tempSlider.value);
-  settings.model = modelSelect.value;
   chrome.storage.local.set({ settings });
   port.postMessage({ type: 'persist-settings', settings });
 }
@@ -206,12 +237,11 @@ function handleQuickAction(message) {
 function runQuickAction(action, selection = '') {
   const prompt = buildQuickActionPrompt(action, selection);
   if (!prompt) return;
-  startNewChat({ announce: false });
-  if (action === 'summarize') {
-    renderSystemMessage('Summarizing this page with the latest context…');
-  } else if (action === 'claim-epic') {
-    renderSystemMessage('Drafting an epic claim based on this page…');
+  if (currentMode !== 'ask') {
+    setMode('ask', { silent: true });
   }
+  startNewChat({ announce: false });
+  renderSystemMessage('Summarizing the latest view of this page…');
   sendPrompt(prompt);
 }
 
@@ -220,14 +250,7 @@ function buildQuickActionPrompt(action, selection = '') {
     if (selection) {
       return `Summarize the selected content with clear bullets and a headline. Selection:\n\n${selection}`;
     }
-    return 'Read the current page using available tools and produce a crisp summary with highlights and action items if present.';
-  }
-  if (action === 'claim-epic') {
-    let prompt = 'Use the page context to draft a concise epic claim with goal, acceptance criteria, and notable risks or dependencies.';
-    if (selection) {
-      prompt += `\n\nReference this selection as primary source material:\n${selection}`;
-    }
-    return prompt;
+    return 'Read the current page using available tools and produce a crisp summary with highlights, key takeaways, and next actions.';
   }
   return '';
 }
@@ -238,6 +261,12 @@ function saveRecentChat() {
     const updated = [{ id: conversationId, title, timestamp: Date.now() }, ...(recentChats || []).filter(item => item.id !== conversationId)];
     chrome.storage.local.set({ recentChats: updated.slice(0, 10) });
   });
+}
+
+function autoSizePrompt() {
+  promptEl.style.height = 'auto';
+  const next = Math.min(promptEl.scrollHeight, 180);
+  promptEl.style.height = `${Math.max(next, 48)}px`;
 }
 
 if (!Array.prototype.findLast) {

@@ -8,46 +8,46 @@
 </head>
 <body>
   <div id="app" aria-live="polite">
-    <header class="sidebar-header">
-      <div>
-        <h1 dir="auto">HAWA (Hyper Agentic Web Assistant)</h1>
-        <p class="subtitle" dir="auto">Offline-first Gemini 2.5 Flash helper</p>
+    <header class="app-header">
+      <div class="brand">
+        <span class="brand-glow" aria-hidden="true"></span>
+        <div class="brand-copy">
+          <p class="eyebrow">Hyper Agentic Web Assistant</p>
+          <h1 dir="auto">HAWA</h1>
+        </div>
       </div>
-      <div class="header-actions">
-        <button id="new-chat" type="button" title="Start new chat">New Chat</button>
-        <button id="stop-stream" type="button" title="Stop response" disabled>Stop</button>
-      </div>
+      <button id="new-chat" type="button" class="ghost-btn" title="Start a new conversation">New Chat</button>
     </header>
-    <section class="quick-actions" aria-label="Quick actions">
-      <button type="button" class="quick-action-btn" data-action="summarize">Summarize page</button>
-      <button type="button" class="quick-action-btn" data-action="claim-epic">Claim epic</button>
-    </section>
-    <section class="controls" aria-label="Model controls">
-      <label>
-        Model
-        <select id="model">
-          <option value="models/gemini-2.5-flash">Gemini 2.5 Flash</option>
-        </select>
-      </label>
-      <label>
-        Temperature
-        <input id="temperature" type="range" min="0" max="1" step="0.1" value="0.4">
-        <span id="temperature-value">0.4</span>
-      </label>
-      <label class="toggle">
-        <input type="checkbox" id="allow-instructions">
-        <span>Allow page instructions</span>
-      </label>
-    </section>
     <main id="chat" tabindex="0">
       <ul id="messages" aria-live="polite"></ul>
     </main>
-    <form id="composer" autocomplete="off">
-      <textarea id="prompt" rows="3" placeholder="Ask the assistant" dir="auto" required></textarea>
-      <div class="composer-actions">
-        <button type="submit" id="send">Send</button>
+    <footer class="composer-area">
+      <form id="composer" autocomplete="off">
+        <div class="composer-shell" role="presentation">
+          <div class="mode-switch" role="tablist" aria-label="Conversation mode">
+            <button type="button" class="mode-tab active" data-mode="ask" aria-selected="true">Ask</button>
+            <button type="button" class="mode-tab" data-mode="agent" aria-selected="false">Agent</button>
+          </div>
+          <div class="composer-input">
+            <label for="prompt" class="prompt-label">Ask HAWA</label>
+            <textarea id="prompt" rows="1" placeholder="Ask HAWA…" dir="auto" required></textarea>
+            <button type="submit" id="send" aria-label="Send to HAWA"></button>
+          </div>
+          <div class="composer-meta">
+            <label class="toggle">
+              <input type="checkbox" id="allow-instructions">
+              <span>Allow page instructions</span>
+            </label>
+            <div class="composer-actions">
+              <button id="stop-stream" type="button" class="ghost-btn" disabled>Stop</button>
+            </div>
+          </div>
+        </div>
+      </form>
+      <div class="chips-row" aria-label="Quick actions">
+        <button type="button" class="chip quick-action-btn" data-action="summarize">Summarize this page</button>
       </div>
-    </form>
+    </footer>
   </div>
   <script src="vendor/highlight.min.js" integrity="sha384-awsrkcsDe5ZhDq5FtXgVcgbf6hldlSJ5eeXGgb2ZEUMIAT1Tw4bNGpbQr2WbVTs0" crossorigin="anonymous"></script>
   <script type="module" src="sidebar.js"></script>

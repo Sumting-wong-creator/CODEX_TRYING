@@ -3,23 +3,23 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>HAWA (Hyper Agentic Web Assistant)</title>
+  <title>HAWA Quick Launch</title>
   <link rel="stylesheet" href="popup.css">
 </head>
 <body>
   <main>
-    <h1 dir="auto">HAWA (Hyper Agentic Web Assistant)</h1>
+    <h1 dir="auto">HAWA quick launch</h1>
+    <p class="subtitle">Tap a shortcut or open the sidebar to switch between Ask and Agent modes.</p>
     <div class="actions">
-      <button id="summarize">Summarize Page</button>
-      <button id="claim-epic">Claim Epic</button>
-      <button id="open-sidebar">Open Sidebar</button>
+      <button id="summarize">Summarize this page</button>
+      <button id="open-sidebar">Open HAWA sidebar</button>
     </div>
     <section>
-      <h2 dir="auto">Recent Chats</h2>
+      <h2 dir="auto">Recent chats</h2>
       <ul id="recent-chats" aria-live="polite"></ul>
     </section>
     <footer>
-      <a href="options.html" target="_blank">Options</a>
+      <a href="options.html" target="_blank">Options &amp; API key</a>
     </footer>
   </main>
   <script type="module" src="popup.js"></script>

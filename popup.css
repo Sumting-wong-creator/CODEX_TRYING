@@ -37,15 +37,21 @@ main {
 
 h1 {
   font-size: 1.05rem;
-  margin: 0 0 14px;
+  margin: 0 0 8px;
   font-weight: 600;
+}
+
+.subtitle {
+  margin: 0 0 18px;
+  font-size: 0.85rem;
+  color: var(--popup-subtle);
 }
 
 .actions {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  margin-bottom: 20px;
+  margin-bottom: 22px;
 }
 
 .actions button {
@@ -62,6 +68,10 @@ h1 {
 
 .actions button:hover {
   transform: translateY(-1px);
+}
+
+section {
+  margin-top: 12px;
 }
 
 section h2 {

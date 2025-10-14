@@ -12,6 +12,9 @@ export async function streamGemini({ apiKey, payload, signal, onToken, onTool, o
       signal
     });
   } catch (error) {
+    if (error?.name === 'AbortError') {
+      return { aborted: true };
+    }
     onError?.(error);
     throw error;
   }
@@ -27,32 +30,41 @@ export async function streamGemini({ apiKey, payload, signal, onToken, onTool, o
   let done = false;
   const candidateState = { tokenBuffer: '', finalCandidate: null };
 
-  while (!done) {
-    const { value, done: readerDone } = await reader.read();
-    done = readerDone;
-    buffer += decoder.decode(value || new Uint8Array(), { stream: !done });
-    let separatorIndex;
-    while ((separatorIndex = buffer.indexOf('\n\n')) !== -1) {
-      const chunk = buffer.slice(0, separatorIndex).trim();
-      buffer = buffer.slice(separatorIndex + 2);
-      if (!chunk) continue;
-      const dataLines = chunk.split('\n').filter(line => line.startsWith('data:'));
-      for (const line of dataLines) {
-        const payloadText = line.replace(/^data:\s*/, '');
-        if (payloadText === '[DONE]') {
-          done = true;
-          break;
-        }
-        try {
-          const json = JSON.parse(payloadText);
-          await handleEvent(json, onToken, onTool, candidateState);
-        } catch (error) {
-          console.warn('Failed to parse stream chunk', error);
+  try {
+    while (!done) {
+      const { value, done: readerDone } = await reader.read();
+      done = readerDone;
+      buffer += decoder.decode(value || new Uint8Array(), { stream: !done });
+      let separatorIndex;
+      while ((separatorIndex = buffer.indexOf('\n\n')) !== -1) {
+        const chunk = buffer.slice(0, separatorIndex).trim();
+        buffer = buffer.slice(separatorIndex + 2);
+        if (!chunk) continue;
+        const dataLines = chunk.split('\n').filter(line => line.startsWith('data:'));
+        for (const line of dataLines) {
+          const payloadText = line.replace(/^data:\s*/, '');
+          if (payloadText === '[DONE]') {
+            done = true;
+            break;
+          }
+          try {
+            const json = JSON.parse(payloadText);
+            await handleEvent(json, onToken, onTool, candidateState);
+          } catch (error) {
+            console.warn('Failed to parse stream chunk', error);
+          }
         }
       }
     }
+  } catch (error) {
+    if (error?.name === 'AbortError') {
+      return { aborted: true };
+    }
+    onError?.(error);
+    throw error;
   }
   onEnd?.(candidateState.finalCandidate);
+  return { aborted: false, finalCandidate: candidateState.finalCandidate };
 }
 
 async function handleEvent(json, onToken, onTool, state) {

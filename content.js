@@ -2,6 +2,9 @@ const port = chrome.runtime.connect({ name: 'content' });
 
 const TOOL_TIMEOUT = 15000;
 let topbarFrame = null;
+let agentOverlayEl = null;
+let agentOverlayStyleEl = null;
+let agentOverlayActive = false;
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (!message) return;
@@ -29,6 +32,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
   if (message.type === 'sidebar-open-request') {
     chrome.runtime.sendMessage({ type: 'open-sidebar' });
+    sendResponse({ ok: true });
+  }
+  if (message.type === 'agent-overlay') {
+    if (message.active) {
+      showAgentOverlay(message);
+    } else {
+      hideAgentOverlay();
+    }
     sendResponse({ ok: true });
   }
 });
@@ -141,6 +152,143 @@ async function executeTool(tool, args, toolCallId) {
   } catch (error) {
     port.postMessage({ type: 'tool-error', toolCallId, error: error.message });
   }
+}
+
+function showAgentOverlay({ conversationId }) {
+  if (agentOverlayActive) {
+    updateAgentOverlay(conversationId);
+    return;
+  }
+  ensureAgentOverlayStyles();
+  agentOverlayEl = document.createElement('div');
+  agentOverlayEl.className = 'hawa-agent-overlay';
+  agentOverlayEl.innerHTML = `
+    <div class="hawa-agent-top">
+      <button type="button" class="hawa-agent-stop" title="Stop agent task" aria-label="Emergency stop">E STOP</button>
+      <div class="hawa-agent-status" role="status">Agent mode active &mdash; HAWA is working</div>
+    </div>
+  `;
+  const stopBtn = agentOverlayEl.querySelector('.hawa-agent-stop');
+  stopBtn.addEventListener('click', () => {
+    chrome.runtime.sendMessage({ type: 'agent-estop' });
+    hideAgentOverlay();
+  });
+  document.documentElement.appendChild(agentOverlayEl);
+  updateAgentOverlay(conversationId);
+  agentOverlayActive = true;
+}
+
+function updateAgentOverlay(conversationId) {
+  if (!agentOverlayEl) return;
+  const status = agentOverlayEl.querySelector('.hawa-agent-status');
+  if (status) {
+    status.textContent = conversationId
+      ? `Agent mode active — session ${conversationId.slice(0, 8)}`
+      : 'Agent mode active — HAWA is working';
+  }
+}
+
+function hideAgentOverlay() {
+  agentOverlayActive = false;
+  if (agentOverlayEl) {
+    agentOverlayEl.remove();
+    agentOverlayEl = null;
+  }
+}
+
+function ensureAgentOverlayStyles() {
+  if (agentOverlayStyleEl) return;
+  const styles = document.createElement('style');
+  styles.id = 'hawa-agent-overlay-styles';
+  styles.textContent = `
+    .hawa-agent-overlay {
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      z-index: 2147483646;
+      animation: hawa-overlay-fade 320ms ease;
+    }
+    .hawa-agent-overlay::before,
+    .hawa-agent-overlay::after {
+      content: '';
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      width: 140px;
+      background: linear-gradient(180deg, rgba(109, 91, 255, 0.32), rgba(109, 91, 255, 0.08));
+      filter: blur(30px);
+      opacity: 0.8;
+      animation: hawa-overlay-glow 3.6s ease-in-out infinite alternate;
+    }
+    .hawa-agent-overlay::before { left: 0; }
+    .hawa-agent-overlay::after { right: 0; }
+    .hawa-agent-top {
+      position: absolute;
+      top: 20px;
+      left: 20px;
+      display: flex;
+      align-items: center;
+      gap: 18px;
+      pointer-events: auto;
+      font-family: 'Inter', 'Segoe UI', system-ui, sans-serif;
+    }
+    .hawa-agent-stop {
+      background: radial-gradient(circle at 30% 30%, #ff7b7b, #d72638);
+      color: #ffffff;
+      border: none;
+      border-radius: 999px;
+      padding: 10px 22px;
+      font-weight: 700;
+      letter-spacing: 0.25em;
+      text-transform: uppercase;
+      box-shadow: 0 16px 32px rgba(215, 38, 56, 0.45);
+      cursor: pointer;
+      transition: transform 160ms ease, box-shadow 160ms ease;
+    }
+    .hawa-agent-stop:hover {
+      transform: translateY(-2px) scale(1.03);
+      box-shadow: 0 24px 40px rgba(215, 38, 56, 0.55);
+    }
+    .hawa-agent-status {
+      pointer-events: auto;
+      padding: 10px 18px;
+      border-radius: 999px;
+      font-size: 0.75rem;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      background: rgba(109, 91, 255, 0.3);
+      color: #fff;
+      border: 1px solid rgba(255, 255, 255, 0.4);
+      backdrop-filter: blur(14px);
+    }
+    @media (prefers-color-scheme: light) {
+      .hawa-agent-status {
+        color: #1b1f2f;
+        border-color: rgba(109, 91, 255, 0.45);
+        background: rgba(109, 91, 255, 0.18);
+      }
+    }
+    @keyframes hawa-overlay-glow {
+      from {
+        opacity: 0.6;
+        transform: scaleX(0.98);
+      }
+      to {
+        opacity: 0.95;
+        transform: scaleX(1.06);
+      }
+    }
+    @keyframes hawa-overlay-fade {
+      from {
+        opacity: 0;
+      }
+      to {
+        opacity: 1;
+      }
+    }
+  `;
+  (document.head || document.documentElement).appendChild(styles);
+  agentOverlayStyleEl = styles;
 }
 
 function resolveElement({ selector, text, role }) {
