@@ -18,6 +18,7 @@ export async function streamGemini({
   const toolCalls = [];
 
   try {
+    console.info('[HAWA][stream] Requesting Gemini stream', { model });
     const response = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -161,6 +162,7 @@ export async function streamGemini({
       });
     }
   } catch (error) {
+    console.error('[HAWA][stream] Gemini streaming failed', error);
     if (onError) {
       onError(error);
     } else {

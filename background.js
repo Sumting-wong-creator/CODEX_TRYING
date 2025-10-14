@@ -52,8 +52,13 @@ chrome.runtime.onConnect.addListener((port) => {
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (!message) return;
   switch (message.type) {
-    case 'test-api-key':
-      testApiKey(message.apiKey).then((result) => sendResponse({ ok: true, result })).catch((error) => sendResponse({ ok: false, error: error.message }));
+    case 'verify-api-key':
+      verifyGeminiKey(message.apiKey)
+        .then((result) => sendResponse({ ok: true, result }))
+        .catch((error) => {
+          console.error('[HAWA] Gemini key verification failed', error);
+          sendResponse({ ok: false, error: error.message });
+        });
       return true;
     case 'set-gemini-key':
       setGeminiKey(message.apiKey, message.payload)
@@ -181,6 +186,7 @@ async function startSession(sourceTabId, port, payload) {
     });
   } catch (error) {
     if (error?.name !== 'AbortError') {
+      console.error('[HAWA] Gemini session failed', error);
       port.postMessage({
         type: 'status',
         conversationId: payload.conversationId,
@@ -478,18 +484,24 @@ async function clearGeminiKey() {
   await chrome.storage.local.remove('apiKeyCache');
 }
 
-async function testApiKey(apiKey) {
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:countTokens?key=${encodeURIComponent(apiKey)}`;
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ contents: [{ role: 'user', parts: [{ text: 'ping' }] }] })
-  });
-  if (!response.ok) {
-    const text = await response.text();
-    throw new Error(text || `Gemini responded with ${response.status}`);
+async function verifyGeminiKey(apiKey) {
+  if (!apiKey) {
+    throw new Error('Missing API key.');
   }
-  return await response.json();
+  const url = `https://generativelanguage.googleapis.com/v1/models?key=${encodeURIComponent(apiKey)}`;
+  try {
+    const response = await fetch(url, { method: 'GET' });
+    if (!response.ok) {
+      const text = await response.text().catch(() => '');
+      throw new Error(text || `Gemini responded with ${response.status}`);
+    }
+    const json = await response.json();
+    console.info('[HAWA] Gemini key verified against models endpoint.');
+    return json;
+  } catch (error) {
+    console.error('[HAWA] Gemini verification request failed', error);
+    throw error;
+  }
 }
 
 async function getAllowList() {
@@ -509,7 +521,7 @@ function stopAgentSession(sessionId) {
 
 function normalizeHistory(history) {
   return history.map((entry) => ({
-    role: entry.role,
+    role: entry.role === 'assistant' ? 'model' : entry.role,
     parts: [{ text: entry.text }]
   }));
 }

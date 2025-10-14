@@ -76,15 +76,17 @@ function sendMessage(prompt, { fromQuickAction, quickAction } = {}) {
   pendingText = '';
   state.streaming = true;
 
+  const historySnapshot = [...state.history];
   const payload = {
     conversationId: state.conversationId,
-    history: [...state.history],
+    history: historySnapshot,
     prompt,
     mode: state.mode,
     allowInstructions: state.allowInstructions,
     quickAction: quickAction || (fromQuickAction ? 'summarize' : undefined)
   };
 
+  state.history.push({ role: 'user', text: prompt });
   port.postMessage({ type: 'start-session', payload });
 }
 
@@ -102,7 +104,7 @@ function handlePortMessage(message) {
         const finalOutput = message.finalText || pendingText;
         finalizeAssistant(finalOutput);
         if (finalOutput) {
-          state.history.push({ role: 'assistant', text: finalOutput });
+          state.history.push({ role: 'model', text: finalOutput });
         }
         if (message.promptFeedback?.blockReason && !finalOutput) {
           appendStatus('HAWA was blocked from replying by safety policies.');
@@ -131,7 +133,6 @@ function appendUserBubble(text) {
   const bubble = createBubble('user');
   const body = bubble.querySelector('.bubble-body');
   body.textContent = text;
-  state.history.push({ role: 'user', text });
   scrollToBottom();
 }
 

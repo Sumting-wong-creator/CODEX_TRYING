@@ -1,5 +1,3 @@
-const API_ROOT = 'https://generativelanguage.googleapis.com/v1/models';
-
 function sanitizeKey(rawKey) {
   return rawKey.trim();
 }
@@ -16,13 +14,11 @@ export async function verifyGeminiApiKey(rawKey) {
   if (!isPlausibleKey(apiKey)) {
     throw new Error('API key format looks incorrect.');
   }
-  const url = `${API_ROOT}?key=${encodeURIComponent(apiKey)}`;
-  const response = await fetch(url, { method: 'GET' });
-  if (!response.ok) {
-    const text = await response.text().catch(() => '');
-    throw new Error(text || `Gemini API rejected the key (${response.status}).`);
+  const response = await chrome.runtime.sendMessage({ type: 'verify-api-key', apiKey });
+  if (!response?.ok) {
+    throw new Error(response?.error || 'Gemini API rejected the key.');
   }
-  const payload = await response.json().catch(() => null);
+  const payload = response.result;
   if (!payload || typeof payload !== 'object') {
     throw new Error('Gemini API returned an unexpected response.');
   }
