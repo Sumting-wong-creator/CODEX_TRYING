@@ -96,10 +96,12 @@ port.onMessage.addListener(message => {
       break;
     case 'complete':
       if (message.conversationId !== conversationId) return;
-      finalizeAssistantMessage();
+      const finalText = finalizeAssistantMessage(message.finalData);
       streaming = false;
       stopBtn.disabled = true;
-      addToHistory('assistant', assistantBuffer);
+      if (finalText.trim()) {
+        addToHistory('assistant', finalText);
+      }
       saveRecentChat();
       sendBtn.disabled = !promptEl.value.trim();
       break;
@@ -167,11 +169,27 @@ function ensureAssistantMessage() {
   }
 }
 
-function finalizeAssistantMessage() {
-  if (!currentAssistantNode) return;
-  renderMarkdown(currentAssistantNode.querySelector('.content'), assistantBuffer);
+function finalizeAssistantMessage(finalData) {
+  if (!currentAssistantNode) return assistantBuffer;
+  if (!assistantBuffer && finalData) {
+    const fallback = extractCandidateText(finalData);
+    if (fallback) {
+      assistantBuffer = fallback;
+    }
+  }
+  const finalText = assistantBuffer;
+  renderMarkdown(currentAssistantNode.querySelector('.content'), finalText);
   currentAssistantNode = null;
   assistantBuffer = '';
+  return finalText;
+}
+
+function extractCandidateText(candidate) {
+  if (!candidate?.content?.parts) return '';
+  return candidate.content.parts
+    .filter(part => typeof part.text === 'string')
+    .map(part => part.text)
+    .join('');
 }
 
 function appendMessage(role, text) {

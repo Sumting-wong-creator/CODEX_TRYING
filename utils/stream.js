@@ -28,7 +28,10 @@ export async function streamGemini({ apiKey, payload, signal, onToken, onTool, o
   const decoder = new TextDecoder();
   let buffer = '';
   let done = false;
-  const candidateState = { tokenBuffer: '', finalCandidate: null };
+  const candidateState = {
+    finalCandidate: null,
+    tokenBuffers: new Map()
+  };
 
   try {
     while (!done) {
@@ -71,11 +74,20 @@ async function handleEvent(json, onToken, onTool, state) {
   const candidates = json?.candidates || [];
   for (const candidate of candidates) {
     state.finalCandidate = candidate;
+    const aggregatedText = extractCandidateText(candidate);
+    const index = candidate?.index ?? 0;
+    const previous = state.tokenBuffers.get(index) || '';
+    if (aggregatedText && aggregatedText !== previous) {
+      const delta = aggregatedText.startsWith(previous)
+        ? aggregatedText.slice(previous.length)
+        : aggregatedText;
+      if (delta) onToken?.(delta);
+      state.tokenBuffers.set(index, aggregatedText);
+    } else if (!state.tokenBuffers.has(index)) {
+      state.tokenBuffers.set(index, aggregatedText || '');
+    }
     const parts = candidate?.content?.parts || [];
     for (const part of parts) {
-      if (typeof part.text === 'string') {
-        onToken?.(part.text);
-      }
       if (part.functionCall) {
         if (onTool) await onTool({ name: part.functionCall.name, args: part.functionCall.args });
       } else if (part.function_call) {
@@ -83,4 +95,12 @@ async function handleEvent(json, onToken, onTool, state) {
       }
     }
   }
+}
+
+function extractCandidateText(candidate) {
+  if (!candidate?.content?.parts) return '';
+  return candidate.content.parts
+    .filter(part => typeof part.text === 'string')
+    .map(part => part.text)
+    .join('');
 }
