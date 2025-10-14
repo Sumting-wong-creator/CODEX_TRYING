@@ -78,21 +78,20 @@ export async function streamGemini({
           }
           const key = candidate?.index ?? 0;
           const previous = candidateText.get(key) || '';
-          if (candidateTextValue && previous !== candidateTextValue) {
-            let delta = candidateTextValue;
+          if (candidateTextValue) {
+            let next = '';
+            let delta = '';
             if (candidateTextValue.startsWith(previous)) {
+              next = candidateTextValue;
               delta = candidateTextValue.slice(previous.length);
+            } else {
+              next = previous + candidateTextValue;
+              delta = candidateTextValue;
             }
+            candidateText.set(key, next);
             if (key === 0) {
-              finalText = candidateTextValue;
+              finalText = next;
               if (delta && onToken) onToken(delta);
-            }
-            candidateText.set(key, candidateTextValue);
-          } else if (candidateTextValue && !candidateText.has(key)) {
-            candidateText.set(key, candidateTextValue);
-            if (key === 0) {
-              finalText = candidateTextValue;
-              if (onToken) onToken(candidateTextValue);
             }
           }
         }
@@ -147,6 +146,10 @@ export async function streamGemini({
         }
         break;
       }
+    }
+
+    if (!finalText && candidateText.has(0)) {
+      finalText = candidateText.get(0) || '';
     }
 
     if (onComplete) {
