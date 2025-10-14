@@ -1,4 +1,5 @@
 import { encryptText, decryptText } from './utils/crypto.js';
+import { verifyGeminiApiKey, persistGeminiApiKey } from './Gemini-Handler.js';
 
 const keyForm = document.getElementById('keyForm');
 const apiKeyInput = document.getElementById('apiKey');
@@ -52,6 +53,17 @@ async function handleSaveKey(event) {
     keyStatus.textContent = 'Enter an API key first.';
     return;
   }
+
+  keyStatus.textContent = 'Verifying API key…';
+  let verifiedKey;
+  try {
+    const { apiKey: cleanedKey } = await verifyGeminiApiKey(apiKey);
+    verifiedKey = cleanedKey;
+  } catch (error) {
+    keyStatus.textContent = `Verification failed: ${error.message}`;
+    return;
+  }
+
   let payload;
   if (encryptToggle.checked) {
     const passphrase = passphraseInput.value.trim();
@@ -60,18 +72,23 @@ async function handleSaveKey(event) {
       return;
     }
     try {
-      const encrypted = await encryptText(passphrase, apiKey);
+      const encrypted = await encryptText(passphrase, verifiedKey);
       payload = { encrypted: true, payload: encrypted };
-      keyStatus.textContent = 'Encrypted key saved. Unlock when you start chatting.';
     } catch (error) {
       keyStatus.textContent = `Encryption failed: ${error.message}`;
       return;
     }
   } else {
-    payload = { encrypted: false, value: apiKey };
-    keyStatus.textContent = 'API key saved.';
+    payload = { encrypted: false, value: verifiedKey };
   }
-  await chrome.runtime.sendMessage({ type: 'store-api-key', payload });
+  try {
+    await persistGeminiApiKey(verifiedKey, payload);
+    keyStatus.textContent = encryptToggle.checked
+      ? 'API key verified, encrypted, and stored. Unlock when you start chatting.'
+      : 'API key verified and stored.';
+  } catch (error) {
+    keyStatus.textContent = `Save failed: ${error.message}`;
+  }
 }
 
 async function handleUnlock() {
@@ -103,7 +120,7 @@ async function handleUnlock() {
 
 async function handleLock() {
   await chrome.runtime.sendMessage({ type: 'lock-api-key' });
-  keyStatus.textContent = 'API key cache cleared.';
+  keyStatus.textContent = 'API key cache and environment value cleared.';
 }
 
 async function handleTest() {
@@ -114,7 +131,7 @@ async function handleTest() {
   }
   keyStatus.textContent = 'Testing…';
   try {
-    await chrome.runtime.sendMessage({ type: 'test-api-key', apiKey: key });
+    await verifyGeminiApiKey(key);
     keyStatus.textContent = 'Gemini API responded successfully.';
   } catch (error) {
     keyStatus.textContent = `Test failed: ${error.message}`;

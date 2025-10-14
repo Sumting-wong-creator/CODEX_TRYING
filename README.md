@@ -12,8 +12,8 @@ HAWA is a Manifest V3 Chrome extension that embeds a cautious Gemini 2.5 Flash a
 ## Getting Started
 
 1. Open the extension **Options** page (right-click the toolbar icon → *Options*).
-2. Paste your Gemini 2.5 Flash API key.
-3. (Optional) Add a passphrase to encrypt the key locally with AES-GCM.
+2. Paste your Gemini 2.5 Flash API key. HAWA validates it against the Gemini models endpoint before saving.
+3. (Optional) Add a passphrase to encrypt the key locally with AES-GCM—the verified key is also stored as the `GEMINI_API_KEY` environment value so the agent can connect immediately.
 4. Add any trusted domains to the allow-list. HAWA blocks risky actions elsewhere.
 
 ## Using HAWA

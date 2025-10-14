@@ -55,14 +55,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     case 'test-api-key':
       testApiKey(message.apiKey).then((result) => sendResponse({ ok: true, result })).catch((error) => sendResponse({ ok: false, error: error.message }));
       return true;
-    case 'store-api-key':
-      chrome.storage.local.set({ apiKeyData: message.payload }).then(() => sendResponse({ ok: true })).catch((error) => sendResponse({ ok: false, error: error.message }));
+    case 'set-gemini-key':
+      setGeminiKey(message.apiKey, message.payload)
+        .then(() => sendResponse({ ok: true }))
+        .catch((error) => sendResponse({ ok: false, error: error.message }));
       return true;
     case 'unlock-api-key':
       cacheApiKey(message.value, message.ttlMinutes || 30).then(() => sendResponse({ ok: true })).catch((error) => sendResponse({ ok: false, error: error.message }));
       return true;
     case 'lock-api-key':
-      chrome.storage.local.remove('apiKeyCache').then(() => sendResponse({ ok: true })).catch((error) => sendResponse({ ok: false, error: error.message }));
+      clearGeminiKey().then(() => sendResponse({ ok: true })).catch((error) => sendResponse({ ok: false, error: error.message }));
       return true;
     case 'agent-stop-request':
       stopAgentSession(message.sessionId);
@@ -425,7 +427,10 @@ function sendToContent(tabId, message) {
 }
 
 async function getApiKey() {
-  const { apiKeyData, apiKeyCache } = await chrome.storage.local.get(['apiKeyData', 'apiKeyCache']);
+  const { envVars, apiKeyData, apiKeyCache } = await chrome.storage.local.get(['envVars', 'apiKeyData', 'apiKeyCache']);
+  if (envVars?.GEMINI_API_KEY) {
+    return envVars.GEMINI_API_KEY;
+  }
   if (!apiKeyData) {
     throw new Error('Add your Gemini API key in options.');
   }
@@ -441,7 +446,36 @@ async function getApiKey() {
 
 async function cacheApiKey(value, ttlMinutes) {
   const expiresAt = Date.now() + ttlMinutes * 60 * 1000;
-  await chrome.storage.local.set({ apiKeyCache: { value, expiresAt } });
+  const { envVars } = await chrome.storage.local.get('envVars');
+  const nextEnv = { ...(envVars || {}), GEMINI_API_KEY: value };
+  await chrome.storage.local.set({ apiKeyCache: { value, expiresAt }, envVars: nextEnv });
+}
+
+async function setGeminiKey(apiKey, payload) {
+  if (!apiKey) {
+    throw new Error('Missing API key.');
+  }
+  const { envVars } = await chrome.storage.local.get('envVars');
+  const nextEnv = { ...(envVars || {}), GEMINI_API_KEY: apiKey };
+  const updates = { envVars: nextEnv };
+  if (payload && typeof payload === 'object') {
+    updates.apiKeyData = payload;
+  }
+  await chrome.storage.local.set(updates);
+  await chrome.storage.local.remove('apiKeyCache');
+}
+
+async function clearGeminiKey() {
+  const { envVars } = await chrome.storage.local.get('envVars');
+  if (envVars && Object.prototype.hasOwnProperty.call(envVars, 'GEMINI_API_KEY')) {
+    delete envVars.GEMINI_API_KEY;
+    if (Object.keys(envVars).length > 0) {
+      await chrome.storage.local.set({ envVars });
+    } else {
+      await chrome.storage.local.remove('envVars');
+    }
+  }
+  await chrome.storage.local.remove('apiKeyCache');
 }
 
 async function testApiKey(apiKey) {
