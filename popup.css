@@ -1,0 +1,112 @@
+:root {
+  color-scheme: light dark;
+  font-family: 'Google Sans', 'Segoe UI', system-ui, sans-serif;
+  --popup-bg: #f8fafd;
+  --popup-surface: #ffffff;
+  --popup-border: rgba(60, 64, 67, 0.16);
+  --popup-text: #1f1f23;
+  --popup-subtle: #5f6368;
+  --popup-accent: linear-gradient(120deg, #4f77ff, #7f56da);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --popup-bg: #0d1016;
+    --popup-surface: #151920;
+    --popup-border: rgba(255, 255, 255, 0.1);
+    --popup-text: #f1f3f5;
+    --popup-subtle: #aab4c5;
+  }
+}
+
+body {
+  margin: 0;
+  min-width: 280px;
+  background: var(--popup-bg);
+  color: var(--popup-text);
+}
+
+main {
+  padding: 18px;
+  background: var(--popup-surface);
+  border-radius: 20px;
+  margin: 12px;
+  border: 1px solid var(--popup-border);
+  box-shadow: 0 12px 32px rgba(15, 23, 42, 0.12);
+}
+
+h1 {
+  font-size: 1.05rem;
+  margin: 0 0 14px;
+  font-weight: 600;
+}
+
+.actions {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 20px;
+}
+
+.actions button {
+  border: none;
+  border-radius: 999px;
+  padding: 10px 16px;
+  background-image: var(--popup-accent);
+  color: #fff;
+  cursor: pointer;
+  font-weight: 600;
+  transition: transform 0.1s ease;
+  box-shadow: 0 8px 20px rgba(79, 119, 255, 0.3);
+}
+
+.actions button:hover {
+  transform: translateY(-1px);
+}
+
+section h2 {
+  font-size: 0.95rem;
+  margin: 0 0 10px;
+  color: var(--popup-subtle);
+  font-weight: 500;
+}
+
+#recent-chats {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+#recent-chats li {
+  background: var(--popup-bg);
+  border-radius: 12px;
+  padding: 8px 10px;
+  font-size: 0.85rem;
+  cursor: pointer;
+  border: 1px solid var(--popup-border);
+  transition: border 0.2s ease, transform 0.1s ease;
+}
+
+#recent-chats li:hover {
+  border-color: rgba(127, 86, 218, 0.6);
+  transform: translateY(-1px);
+}
+
+footer {
+  margin-top: 16px;
+  text-align: right;
+  font-size: 0.78rem;
+  color: var(--popup-subtle);
+}
+
+footer a {
+  color: inherit;
+  text-decoration: none;
+}
+
+footer a:hover {
+  text-decoration: underline;
+}

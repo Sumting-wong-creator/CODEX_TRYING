@@ -1,0 +1,130 @@
+:root {
+  color-scheme: light dark;
+  font-family: 'Google Sans', 'Segoe UI', system-ui, sans-serif;
+  --options-bg: #f5f7fb;
+  --options-surface: #ffffff;
+  --options-border: rgba(60, 64, 67, 0.16);
+  --options-text: #1f1f23;
+  --options-subtle: #5f6368;
+  --options-accent: linear-gradient(120deg, #4f77ff, #7f56da);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --options-bg: #0d1016;
+    --options-surface: #151920;
+    --options-border: rgba(255, 255, 255, 0.1);
+    --options-text: #f1f3f5;
+    --options-subtle: #aab4c5;
+  }
+}
+
+body {
+  margin: 0;
+  background: var(--options-bg);
+  color: var(--options-text);
+}
+
+main {
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 32px 20px 64px;
+}
+
+h1 {
+  font-size: 1.6rem;
+  margin-bottom: 20px;
+  font-weight: 600;
+}
+
+section {
+  background: var(--options-surface);
+  padding: 20px;
+  border-radius: 18px;
+  border: 1px solid var(--options-border);
+  box-shadow: 0 18px 42px rgba(15, 23, 42, 0.12);
+  margin-bottom: 24px;
+}
+
+section h2 {
+  margin-top: 0;
+  font-size: 1.1rem;
+  color: var(--options-subtle);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+label {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 14px;
+  font-size: 0.95rem;
+}
+
+input[type="password"],
+textarea,
+input[type="text"] {
+  border-radius: 14px;
+  border: 1px solid var(--options-border);
+  padding: 12px;
+  font-size: 0.95rem;
+  background: var(--options-bg);
+  color: var(--options-text);
+}
+
+textarea {
+  resize: vertical;
+  min-height: 120px;
+}
+
+.buttons {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+}
+
+button {
+  border: none;
+  border-radius: 999px;
+  padding: 10px 18px;
+  background-image: var(--options-accent);
+  color: #fff;
+  cursor: pointer;
+  font-weight: 600;
+  box-shadow: 0 10px 26px rgba(79, 119, 255, 0.28);
+  transition: transform 0.1s ease;
+}
+
+button:hover {
+  transform: translateY(-1px);
+}
+
+.toggle {
+  flex-direction: row;
+  align-items: center;
+  gap: 10px;
+}
+
+.toggle span {
+  font-size: 0.9rem;
+  color: var(--options-subtle);
+}
+
+#api-status {
+  min-height: 20px;
+  font-size: 0.85rem;
+}
+
+#api-status[data-status="success"] {
+  color: #22c55e;
+}
+
+#api-status[data-status="error"] {
+  color: #f87171;
+}
+
+#api-status[data-status="info"] {
+  color: #60a5fa;
+}

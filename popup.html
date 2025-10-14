@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Agentic Web Assistant</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <main>
+    <h1 dir="auto">Agentic Web Assistant</h1>
+    <div class="actions">
+      <button id="summarize">Summarize Page</button>
+      <button id="claim-epic">Claim Epic</button>
+      <button id="open-sidebar">Open Sidebar</button>
+    </div>
+    <section>
+      <h2 dir="auto">Recent Chats</h2>
+      <ul id="recent-chats" aria-live="polite"></ul>
+    </section>
+    <footer>
+      <a href="options.html" target="_blank">Options</a>
+    </footer>
+  </main>
+  <script type="module" src="popup.js"></script>
+</body>
+</html>

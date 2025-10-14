@@ -1,0 +1,48 @@
+{
+  "manifest_version": 3,
+  "name": "Agentic Web Assistant",
+  "description": "Offline-first agentic assistant with Gemini 2.5 Flash streaming integration.",
+  "version": "1.0.0",
+  "permissions": [
+    "activeTab",
+    "scripting",
+    "storage",
+    "tabs",
+    "sidePanel",
+    "contextMenus",
+    "notifications"
+  ],
+  "host_permissions": [
+    "https://*/*",
+    "http://*/*"
+  ],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "side_panel": {
+    "default_path": "sidebar.html"
+  },
+  "action": {
+    "default_title": "Agentic Web Assistant",
+    "default_popup": "popup.html"
+  },
+  "options_page": "options.html",
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "topbar.html",
+        "topbar.js",
+        "topbar.css"
+      ],
+      "matches": ["<all_urls>"]
+    }
+  ]
+}
