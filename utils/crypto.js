@@ -1,49 +1,81 @@
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 
-export async function encryptText(text, passphrase) {
-  const salt = crypto.getRandomValues(new Uint8Array(16));
+async function deriveKey(passphrase, salt) {
+  const keyMaterial = await crypto.subtle.importKey(
+    'raw',
+    encoder.encode(passphrase),
+    'PBKDF2',
+    false,
+    ['deriveKey']
+  );
+  return crypto.subtle.deriveKey(
+    {
+      name: 'PBKDF2',
+      salt,
+      iterations: 100000,
+      hash: 'SHA-256'
+    },
+    keyMaterial,
+    {
+      name: 'AES-GCM',
+      length: 256
+    },
+    false,
+    ['encrypt', 'decrypt']
+  );
+}
+
+export async function encryptText(passphrase, plainText) {
   const iv = crypto.getRandomValues(new Uint8Array(12));
+  const salt = crypto.getRandomValues(new Uint8Array(16));
   const key = await deriveKey(passphrase, salt);
-  const ciphertext = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, encoder.encode(text));
+  const cipherBuffer = await crypto.subtle.encrypt(
+    {
+      name: 'AES-GCM',
+      iv
+    },
+    key,
+    encoder.encode(plainText)
+  );
   return {
-    ciphertext: arrayBufferToBase64(ciphertext),
-    iv: arrayBufferToBase64(iv),
-    salt: arrayBufferToBase64(salt)
+    iv: arrayToBase64(iv),
+    salt: arrayToBase64(salt),
+    ciphertext: arrayToBase64(new Uint8Array(cipherBuffer))
   };
 }
 
-export async function decryptText(payload, passphrase) {
-  const { ciphertext, iv, salt } = payload;
-  const key = await deriveKey(passphrase, base64ToArrayBuffer(salt));
-  const result = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: base64ToArrayBuffer(iv) }, key, base64ToArrayBuffer(ciphertext));
-  return decoder.decode(result);
+export async function decryptText(passphrase, payload) {
+  const iv = base64ToArray(payload.iv);
+  const salt = base64ToArray(payload.salt);
+  const ciphertext = base64ToArray(payload.ciphertext);
+  const key = await deriveKey(passphrase, salt);
+  const plainBuffer = await crypto.subtle.decrypt(
+    {
+      name: 'AES-GCM',
+      iv
+    },
+    key,
+    ciphertext
+  );
+  return decoder.decode(plainBuffer);
 }
 
-async function deriveKey(passphrase, saltBuffer) {
-  const material = await crypto.subtle.importKey('raw', encoder.encode(passphrase), { name: 'PBKDF2' }, false, ['deriveKey']);
-  return crypto.subtle.deriveKey({
-    name: 'PBKDF2',
-    salt: saltBuffer,
-    iterations: 200000,
-    hash: 'SHA-256'
-  }, material, { name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
-}
-
-function arrayBufferToBase64(buffer) {
-  const bytes = new Uint8Array(buffer);
+function arrayToBase64(array) {
   let binary = '';
-  for (const byte of bytes) {
-    binary += String.fromCharCode(byte);
+  const len = array.byteLength;
+  for (let i = 0; i < len; i++) {
+    binary += String.fromCharCode(array[i]);
   }
   return btoa(binary);
 }
 
-function base64ToArrayBuffer(base64) {
+function base64ToArray(base64) {
   const binary = atob(base64);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i += 1) {
-    bytes[i] = binary.charCodeAt(i);
+  const len = binary.length;
+  const array = new Uint8Array(len);
+  for (let i = 0; i < len; i++) {
+    array[i] = binary.charCodeAt(i);
   }
-  return bytes.buffer;
+  return array;
 }

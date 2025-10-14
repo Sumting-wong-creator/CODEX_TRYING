@@ -1,27 +1,21 @@
 <!DOCTYPE html>
 <html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>HAWA Quick Launch</title>
-  <link rel="stylesheet" href="popup.css">
-</head>
-<body>
-  <main>
-    <h1 dir="auto">HAWA quick launch</h1>
-    <p class="subtitle">Tap a shortcut or open the sidebar to switch between Ask and Agent modes.</p>
-    <div class="actions">
-      <button id="summarize">Summarize this page</button>
-      <button id="open-sidebar">Open HAWA sidebar</button>
-    </div>
-    <section>
-      <h2 dir="auto">Recent chats</h2>
-      <ul id="recent-chats" aria-live="polite"></ul>
-    </section>
-    <footer>
-      <a href="options.html" target="_blank">Options &amp; API key</a>
-    </footer>
-  </main>
-  <script type="module" src="popup.js"></script>
-</body>
+  <head>
+    <meta charset="utf-8" />
+    <title>HAWA Quick Actions</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <main class="popup-shell">
+      <h1>HAWA</h1>
+      <p>Hyper Agentic Web Assistant</p>
+      <div class="actions">
+        <button data-action="open">Open Sidebar</button>
+        <button data-action="summarize">Summarize Page</button>
+      </div>
+      <small>Right-click the icon for options.</small>
+    </main>
+    <script src="popup.js" type="module"></script>
+  </body>
 </html>

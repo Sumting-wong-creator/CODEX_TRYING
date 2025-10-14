@@ -1,303 +1,232 @@
 import { renderMarkdown } from './utils/markdown.js';
 
-const messagesEl = document.getElementById('messages');
-const promptEl = document.getElementById('prompt');
-const formEl = document.getElementById('composer');
-const stopBtn = document.getElementById('stop-stream');
-const newChatBtn = document.getElementById('new-chat');
-const allowInstructionsToggle = document.getElementById('allow-instructions');
-const modeTabs = Array.from(document.querySelectorAll('.mode-tab'));
-const quickActionButtons = document.querySelectorAll('.quick-action-btn');
-const sendBtn = document.getElementById('send');
-
 const port = chrome.runtime.connect({ name: 'sidebar' });
-let conversationId = crypto.randomUUID();
-let history = [];
-let streaming = false;
-let assistantBuffer = '';
-let currentAssistantNode = null;
-let currentMode = 'ask';
-let settings = {
-  allowInstructions: false
-};
+
+const chatLog = document.getElementById('chatLog');
+const composerForm = document.getElementById('composerForm');
+const composerInput = document.getElementById('composerInput');
+const resetButton = document.querySelector('.hawa-reset');
+const modeButtons = Array.from(document.querySelectorAll('.mode-btn'));
+const quickButtons = Array.from(document.querySelectorAll('.hawa-quick-btn'));
+const allowToggle = document.getElementById('allowInstructions');
+
+let state = createInitialState();
+let pendingBubble = null;
+let pendingText = '';
 
 init();
 
 function init() {
-  setMode(currentMode, { silent: true });
-  chrome.storage.local.get(['settings']).then(({ settings: storedSettings }) => {
-    if (storedSettings) {
-      settings = { ...settings, ...storedSettings };
-      allowInstructionsToggle.checked = !!settings.allowInstructions;
-    }
+  loadPreferences();
+  composerForm.addEventListener('submit', handleSubmit);
+  composerInput.addEventListener('input', autoResize);
+  resetButton.addEventListener('click', () => resetConversation(true));
+  modeButtons.forEach((button) => {
+    button.addEventListener('click', () => selectMode(button.dataset.mode));
   });
-  chrome.storage.local.get(['recentChats']).then(({ recentChats }) => {
-    if (recentChats?.length) {
-      renderSystemMessage('Welcome back. Continue where you left off or start something new.');
-    } else {
-      renderSystemMessage('HAWA is ready. Ask a question or let her explore in Agent mode.');
-    }
+  quickButtons.forEach((button) => {
+    button.addEventListener('click', () => runQuickAction(button.dataset.action));
   });
-  sendBtn.disabled = true;
+  allowToggle.addEventListener('change', () => {
+    state.allowInstructions = allowToggle.checked;
+    savePreferences();
+  });
+  port.onMessage.addListener(handlePortMessage);
 }
 
-modeTabs.forEach(tab => {
-  tab.addEventListener('click', () => {
-    const mode = tab.dataset.mode;
-    if (mode && mode !== currentMode) {
-      setMode(mode);
+function createInitialState() {
+  return {
+    conversationId: crypto.randomUUID(),
+    history: [],
+    mode: 'ask',
+    allowInstructions: false,
+    streaming: false
+  };
+}
+
+function loadPreferences() {
+  chrome.storage.local.get('sidebarPrefs').then((data) => {
+    if (data.sidebarPrefs?.allowInstructions) {
+      state.allowInstructions = true;
+      allowToggle.checked = true;
     }
   });
-});
+}
 
-promptEl.addEventListener('input', () => {
-  autoSizePrompt();
-  sendBtn.disabled = !promptEl.value.trim();
-});
+function savePreferences() {
+  chrome.storage.local.set({ sidebarPrefs: { allowInstructions: state.allowInstructions } });
+}
 
-autoSizePrompt();
-
-allowInstructionsToggle.addEventListener('change', persistSettings);
-
-formEl.addEventListener('submit', event => {
+function handleSubmit(event) {
   event.preventDefault();
-  if (streaming) return;
-  const prompt = promptEl.value.trim();
+  const prompt = composerInput.value.trim();
   if (!prompt) return;
-  sendPrompt(prompt);
-});
+  sendMessage(prompt, { fromQuickAction: false });
+}
 
-stopBtn.addEventListener('click', () => {
-  port.postMessage({ type: 'stop-request' });
-  streaming = false;
-  stopBtn.disabled = true;
-  sendBtn.disabled = !promptEl.value.trim();
-});
+function sendMessage(prompt, { fromQuickAction, quickAction } = {}) {
+  if (state.streaming) {
+    port.postMessage({ type: 'stop-session', payload: { conversationId: state.conversationId } });
+  }
+  appendUserBubble(prompt);
+  composerInput.value = '';
+  autoResize();
+  pendingBubble = appendAssistantBubble('');
+  pendingText = '';
+  state.streaming = true;
 
-newChatBtn.addEventListener('click', () => startNewChat());
+  const payload = {
+    conversationId: state.conversationId,
+    history: [...state.history],
+    prompt,
+    mode: state.mode,
+    allowInstructions: state.allowInstructions,
+    quickAction: quickAction || (fromQuickAction ? 'summarize' : undefined)
+  };
 
-quickActionButtons.forEach(button => {
-  button.addEventListener('click', () => {
-    const action = button.dataset.action;
-    if (action) {
-      runQuickAction(action);
-    }
-  });
-});
+  port.postMessage({ type: 'start-session', payload });
+}
 
-port.onMessage.addListener(message => {
+function handlePortMessage(message) {
   if (!message) return;
-  console.debug('[HAWA][sidebar] message', message);
   switch (message.type) {
     case 'token':
-      if (message.conversationId !== conversationId) return;
-      ensureAssistantMessage();
-      assistantBuffer += message.token;
-      renderMarkdown(currentAssistantNode.querySelector('.content'), assistantBuffer);
+      if (message.conversationId !== state.conversationId) return;
+      pendingText += message.token;
+      updateAssistantBubble(pendingText, true);
       break;
     case 'complete':
-      if (message.conversationId !== conversationId) return;
-      const finalText = finalizeAssistantMessage(message.finalData);
-      streaming = false;
-      stopBtn.disabled = true;
-      if (finalText.trim()) {
-        addToHistory('assistant', finalText);
+      if (message.conversationId !== state.conversationId) return;
+      finalizeAssistant(message.finalText);
+      if (message.finalText) {
+        state.history.push({ role: 'assistant', text: message.finalText });
       }
-      saveRecentChat();
-      sendBtn.disabled = !promptEl.value.trim();
+      state.streaming = false;
       break;
     case 'status':
-      renderSystemMessage(message.message, message.status === 'progress' ? 'info' : message.status);
-      if (message.status !== 'progress') {
-        streaming = false;
-        stopBtn.disabled = true;
-        sendBtn.disabled = !promptEl.value.trim();
-      }
-      break;
-    case 'tool-response':
-      if (message.tool === 'readPage') {
-        renderSystemMessage('Shared fresh page context with HAWA.');
-      }
+      if (message.conversationId && message.conversationId !== state.conversationId) return;
+      appendStatus(message.message || 'Something went wrong.');
+      state.streaming = false;
       break;
     case 'quick-action':
-      handleQuickAction(message);
+      handleQuickActionMessage(message);
       break;
     default:
       break;
   }
-});
-
-function setMode(mode, { silent = false } = {}) {
-  currentMode = mode === 'agent' ? 'agent' : 'ask';
-  document.documentElement.dataset.mode = currentMode;
-  modeTabs.forEach(tab => {
-    const active = tab.dataset.mode === currentMode;
-    tab.classList.toggle('active', active);
-    tab.setAttribute('aria-selected', active ? 'true' : 'false');
-  });
-  promptEl.placeholder = currentMode === 'agent'
-    ? 'Describe the task for HAWA to perform in a fresh workspace…'
-    : 'Ask HAWA…';
-  if (!silent) {
-    renderSystemMessage(currentMode === 'agent'
-      ? 'Agent mode engages a dedicated workspace tab. HAWA will narrate each action and wait for your go-ahead.'
-      : 'Ask mode keeps HAWA focused on this page. Provide context or ask for help.');
-  }
 }
 
-function sendPrompt(prompt) {
-  appendMessage('user', prompt);
-  assistantBuffer = '';
-  currentAssistantNode = appendMessage('assistant', '');
-  streaming = true;
-  console.debug('[HAWA][sidebar] sending prompt', { mode: currentMode, conversationId, historyCount: history.length });
-  stopBtn.disabled = false;
-  sendBtn.disabled = true;
-  const context = history.map(item => ({ ...item }));
-  const request = {
-    conversationId,
-    prompt,
-    history: context,
-    allowInstructions: allowInstructionsToggle.checked,
-    mode: currentMode
-  };
-  port.postMessage({ type: 'start-request', request });
-  addToHistory('user', prompt);
-  promptEl.value = '';
-  autoSizePrompt();
+function appendUserBubble(text) {
+  const bubble = createBubble('user');
+  const body = bubble.querySelector('.bubble-body');
+  body.textContent = text;
+  state.history.push({ role: 'user', text });
+  scrollToBottom();
 }
 
-function ensureAssistantMessage() {
-  if (!currentAssistantNode) {
-    currentAssistantNode = appendMessage('assistant', '');
-  }
+function appendAssistantBubble(text) {
+  const bubble = createBubble('assistant');
+  if (text) updateAssistantBubble(text, false, bubble);
+  return bubble;
 }
 
-function finalizeAssistantMessage(finalData) {
-  if (!currentAssistantNode) return assistantBuffer;
-  if (!assistantBuffer && finalData) {
-    const fallback = extractCandidateText(finalData);
-    if (fallback) {
-      assistantBuffer = fallback;
-    } else if (finalData?.finishReason === 'SAFETY') {
-      assistantBuffer = 'Gemini blocked this reply for safety. Try rephrasing or adjusting the request.';
-    }
-  }
-  const finalText = assistantBuffer;
-  renderMarkdown(currentAssistantNode.querySelector('.content'), finalText);
-  currentAssistantNode = null;
-  assistantBuffer = '';
-  return finalText;
-}
-
-function extractCandidateText(candidate) {
-  if (!candidate?.content?.parts) return '';
-  return candidate.content.parts
-    .filter(part => typeof part.text === 'string')
-    .map(part => part.text)
-    .join('');
-}
-
-function appendMessage(role, text) {
-  const li = document.createElement('li');
-  li.className = `message ${role}`;
-  const roleEl = document.createElement('div');
-  roleEl.className = 'role';
-  roleEl.textContent = role === 'assistant' ? 'HAWA' : role === 'system' ? 'System' : 'You';
-  const content = document.createElement('div');
-  content.className = 'content';
-  content.dir = 'auto';
-  if (role === 'assistant') {
-    renderMarkdown(content, text);
+function updateAssistantBubble(text, isStreaming, bubbleRef) {
+  const bubble = bubbleRef || pendingBubble || appendAssistantBubble('');
+  const body = bubble.querySelector('.bubble-body');
+  if (text) {
+    renderMarkdown(body, text);
   } else {
-    content.textContent = text;
+    body.textContent = '';
   }
-  li.append(roleEl, content);
-  messagesEl.appendChild(li);
-  messagesEl.parentElement.scrollTop = messagesEl.parentElement.scrollHeight;
-  return li;
+  bubble.classList.toggle('token-stream', isStreaming);
+  scrollToBottom();
 }
 
-function addToHistory(role, text) {
-  history.push({ role, text });
-  if (history.length > 16) {
-    history = history.slice(history.length - 16);
+function finalizeAssistant(text) {
+  if (!pendingBubble) {
+    pendingBubble = appendAssistantBubble('');
   }
+  updateAssistantBubble(text || 'HAWA could not respond.', false, pendingBubble);
+  pendingBubble.classList.remove('token-stream');
+  pendingBubble = null;
+  pendingText = '';
 }
 
-function startNewChat({ announce = true } = {}) {
-  history = [];
-  conversationId = crypto.randomUUID();
-  messagesEl.innerHTML = '';
-  currentAssistantNode = null;
-  assistantBuffer = '';
-  streaming = false;
-  stopBtn.disabled = true;
-  promptEl.value = '';
-  autoSizePrompt();
-  document.body.classList.add('chat-resetting');
-  setTimeout(() => document.body.classList.remove('chat-resetting'), 480);
-  if (announce) {
-    renderSystemMessage('New chat started. HAWA is listening.');
-  }
+function appendStatus(text) {
+  const status = document.createElement('div');
+  status.className = 'status-line';
+  status.textContent = text;
+  chatLog.appendChild(status);
+  scrollToBottom();
 }
 
-function renderSystemMessage(text, status = 'info') {
-  const li = appendMessage('system', text);
-  li.classList.add(`status-${status}`);
+function createBubble(role) {
+  const article = document.createElement('article');
+  article.className = `chat-bubble ${role}`;
+  article.setAttribute('dir', 'auto');
+  const author = document.createElement('div');
+  author.className = 'bubble-author';
+  author.textContent = role === 'user' ? 'You' : 'HAWA';
+  const body = document.createElement('div');
+  body.className = 'bubble-body';
+  article.append(author, body);
+  chatLog.appendChild(article);
+  scrollToBottom();
+  return article;
 }
 
-function persistSettings() {
-  settings.allowInstructions = allowInstructionsToggle.checked;
-  chrome.storage.local.set({ settings });
-  port.postMessage({ type: 'persist-settings', settings });
-}
-
-function handleQuickAction(message) {
-  const { action, selection } = message;
-  runQuickAction(action, selection);
-}
-
-function runQuickAction(action, selection = '') {
-  const prompt = buildQuickActionPrompt(action, selection);
-  if (!prompt) return;
-  if (currentMode !== 'ask') {
-    setMode('ask', { silent: true });
-  }
-  startNewChat({ announce: false });
-  renderSystemMessage('Summarizing the latest view of this page…');
-  sendPrompt(prompt);
-}
-
-function buildQuickActionPrompt(action, selection = '') {
-  if (action === 'summarize') {
-    if (selection) {
-      return `Summarize the selected content with clear bullets and a headline. Selection:\n\n${selection}`;
-    }
-    return 'Read the current page using available tools and produce a crisp summary with highlights, key takeaways, and next actions.';
-  }
-  return '';
-}
-
-function saveRecentChat() {
-  const title = history.findLast?.(item => item.role === 'user')?.text?.slice(0, 80) || 'Conversation';
-  chrome.storage.local.get(['recentChats']).then(({ recentChats }) => {
-    const updated = [{ id: conversationId, title, timestamp: Date.now() }, ...(recentChats || []).filter(item => item.id !== conversationId)];
-    chrome.storage.local.set({ recentChats: updated.slice(0, 10) });
+function scrollToBottom() {
+  requestAnimationFrame(() => {
+    chatLog.parentElement.scrollTop = chatLog.parentElement.scrollHeight;
   });
 }
 
-function autoSizePrompt() {
-  promptEl.style.height = 'auto';
-  const next = Math.min(promptEl.scrollHeight, 180);
-  promptEl.style.height = `${Math.max(next, 48)}px`;
+function autoResize() {
+  composerInput.style.height = 'auto';
+  composerInput.style.height = `${composerInput.scrollHeight}px`;
 }
 
-if (!Array.prototype.findLast) {
-  Array.prototype.findLast = function(predicate) {
-    for (let i = this.length - 1; i >= 0; i -= 1) {
-      if (predicate(this[i], i, this)) return this[i];
-    }
-    return undefined;
-  };
+function resetConversation(animate) {
+  port.postMessage({ type: 'stop-session', payload: { conversationId: state.conversationId } });
+  chatLog.innerHTML = '';
+  state = createInitialState();
+  state.mode = modeButtons.find((btn) => btn.classList.contains('active'))?.dataset?.mode || 'ask';
+  state.allowInstructions = allowToggle.checked;
+  pendingBubble = null;
+  pendingText = '';
+  if (animate) {
+    const shell = document.querySelector('.hawa-shell');
+    shell.classList.add('resetting');
+    setTimeout(() => shell.classList.remove('resetting'), 400);
+  }
 }
+
+function selectMode(mode) {
+  state.mode = mode;
+  modeButtons.forEach((btn) => {
+    const active = btn.dataset.mode === mode;
+    btn.classList.toggle('active', active);
+    btn.setAttribute('aria-pressed', active ? 'true' : 'false');
+  });
+}
+
+function runQuickAction(action) {
+  if (action === 'summarize') {
+    sendMessage('Please summarize this page.', { fromQuickAction: true, quickAction: 'summarize' });
+  }
+}
+
+function handleQuickActionMessage(message) {
+  const basePrompt = message.action === 'summarize'
+    ? 'Please summarize this page.'
+    : message.action === 'claim-epic'
+    ? 'Draft a short "Claim Epic" summary for this content.'
+    : '';
+  if (!basePrompt) return;
+  const prompt = message.selection ? `Focus on this selection first:\n${message.selection}\n\n${basePrompt}` : basePrompt;
+  sendMessage(prompt, { fromQuickAction: true, quickAction: message.action });
+}
+
+window.addEventListener('beforeunload', () => {
+  port.disconnect();
+});

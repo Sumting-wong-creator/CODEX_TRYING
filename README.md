@@ -1,54 +1,41 @@
 # HAWA (Hyper Agentic Web Assistant)
 
-HAWA (Hyper Agentic Web Assistant) is a Manifest V3 Chrome extension that provides an offline-first Gemini 2.5 Flash copilot for browsing. All processing happens locally except streaming calls to the Gemini API.
+HAWA is a Manifest V3 Chrome extension that embeds a cautious Gemini 2.5 Flash agent directly in Chrome's side panel. It runs entirely on-device except for API calls to Gemini.
 
 ## Installation
 
-1. Open `chrome://extensions/` in Chrome or Edge.
-2. Enable **Developer mode** in the top-right corner.
-3. Click **Load unpacked** and select this folder.
-4. Pin the extension to keep the toolbar icon handy.
+1. Go to `chrome://extensions/`.
+2. Enable **Developer mode**.
+3. Click **Load unpacked** and choose this folder.
+4. Pin the action icon so HAWA is always one click away.
 
-Once loaded, clicking the toolbar icon opens the Chrome side panel with HAWA. The redesigned chat bubble keeps things minimal and offers two modes: **Ask** for page-aware answers, and **Agent** for hands-on automation in a dedicated workspace tab. Right-click the icon and choose **Options** at any time to configure your Gemini 2.5 Flash API key.
+## Getting Started
 
-## Permissions
+1. Open the extension **Options** page (right-click the toolbar icon → *Options*).
+2. Paste your Gemini 2.5 Flash API key.
+3. (Optional) Add a passphrase to encrypt the key locally with AES-GCM.
+4. Add any trusted domains to the allow-list. HAWA blocks risky actions elsewhere.
 
-The extension requests the following permissions:
+## Using HAWA
 
-- `activeTab`, `tabs` – allow the assistant to understand and interact with the current page when you approve it.
-- `scripting` – injects the sidebar UI, topbar, and content script helpers.
-- `storage` – stores your settings, encrypted API key, and recent chats locally.
-- `sidePanel` – opens the persistent chat panel.
-- `contextMenus` – exposes a “Summarize with HAWA” action in the page menu.
-- `notifications` – used for safety and unlock reminders.
-- Host permissions (`https://*/*`, `http://*/*`) – required so the assistant can read and act on any page you allow.
+- **Ask mode** (default) chats about the current page. When you send a message, HAWA automatically captures the page context.
+- **Agent mode** opens a dedicated tab with an animated overlay and an emergency stop button. HAWA performs actions there within your guardrails.
+- Use the **Summarize** quick action to get a structured digest of the page instantly.
+- Press **New chat** to reset the conversation with a gentle transition animation.
 
-## Ask & Agent modes
+## Safety Guardrails
 
-- **Ask** mode stays anchored to the page you are viewing. HAWA reads headings, selections, and metadata with user consent to answer questions clearly in English.
-- **Agent** mode opens a fresh tab with a neon edge overlay and an `E STOP` control in the top-left corner. You can halt automation at any time; the overlay collapses automatically once the task completes.
-- The chat composer animates between modes, and the side panel remembers your last preference per tab.
+- Transactions with totals other than zero are blocked automatically.
+- Navigation, typing, clicking, and scrolling are restricted to domains on your allow-list.
+- Before form submissions or cart interactions, the content script prompts for confirmation.
+- Page-level instructions are ignored unless you enable them in the chat bar.
 
-## Safety & Guardrails
+## Debugging
 
-- Actions such as navigation, typing, or clicking run only on domains in your allow-list (configured in **Options**).
-- Requests with non-zero totals are blocked automatically to prevent unapproved purchases.
-- A confirmation modal appears before form submits or cart interactions.
-- Page-level instructions are filtered unless you toggle **Allow page instructions** in the sidebar or options.
+Open the side panel and press `Ctrl+Shift+J` (or `Cmd+Option+J` on macOS) to inspect the sidebar logs. The background service worker also emits detailed streaming diagnostics visible at `chrome://extensions` → *Service Worker*.
 
-## API Key Storage
+## Privacy
 
-Add your Gemini API key in the options page. You can encrypt it with a custom passphrase; the key can be unlocked for 30 minutes using AES-GCM (PBKDF2 key derivation). No key data leaves your machine.
+All chat history, preferences, and encrypted credentials stay in `chrome.storage.local`. Nothing is sent anywhere except the text needed for Gemini responses.
 
-## Troubleshooting
-
-- If streaming stalls, click **Stop** and resend your message.
-- Missing API key? Open the options page and ensure it is saved or unlocked.
-- To clear history, start a new chat from the sidebar header.
-
-## Language Defaults
-
-- The assistant responds in English by default to keep guidance consistent. Ask explicitly if you prefer another language.
-- Interface copy is written in English while still respecting `dir="auto"` for accessibility.
-
-Enjoy safer, more transparent browsing with HAWA!
+Enjoy calm, minimal, system-aware theming that adapts to your light or dark mode automatically.

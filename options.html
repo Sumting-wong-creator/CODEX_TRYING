@@ -1,51 +1,58 @@
 <!DOCTYPE html>
 <html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>HAWA Options</title>
-  <link rel="stylesheet" href="options.css">
-</head>
-<body>
-  <main>
-    <h1 dir="auto">HAWA Settings</h1>
-    <section>
-      <h2>Gemini API Key</h2>
-      <form id="api-form">
-        <label>
-          API Key
-          <input type="password" id="api-key" autocomplete="off" required>
-        </label>
-        <label class="toggle">
-          <input type="checkbox" id="enable-encryption">
-          <span>Encrypt API key with passphrase</span>
-        </label>
-        <label id="passphrase-field" hidden>
-          Passphrase
-          <input type="password" id="passphrase" autocomplete="off">
-        </label>
-        <div class="buttons">
-          <button type="submit">Save</button>
-          <button type="button" id="unlock">Unlock for 30 minutes</button>
-          <button type="button" id="test-key">Test API Key</button>
+  <head>
+    <meta charset="utf-8" />
+    <title>HAWA Options</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="stylesheet" href="options.css" />
+  </head>
+  <body>
+    <main class="options-shell">
+      <header>
+        <h1>HAWA preferences</h1>
+        <p>Configure your Gemini 2.5 Flash API key and safety rules.</p>
+      </header>
+
+      <section class="card">
+        <h2>Gemini API key</h2>
+        <form id="keyForm">
+          <label>
+            <span>API key</span>
+            <input id="apiKey" type="password" autocomplete="off" placeholder="AIza…" />
+          </label>
+          <label class="toggle">
+            <input type="checkbox" id="encryptToggle" />
+            <span>Encrypt API key with passphrase</span>
+          </label>
+          <label>
+            <span>Passphrase</span>
+            <input id="passphrase" type="password" autocomplete="off" placeholder="Only stored locally" />
+          </label>
+          <div class="row">
+            <button type="submit">Save key</button>
+            <button type="button" id="unlockBtn">Unlock</button>
+            <button type="button" id="lockBtn">Lock</button>
+            <button type="button" id="testBtn">Test</button>
+          </div>
+          <p class="status" id="keyStatus"></p>
+        </form>
+      </section>
+
+      <section class="card">
+        <h2>Allow-list</h2>
+        <p>Add domains (one per line) where HAWA may perform actions.</p>
+        <textarea id="allowList" rows="6" placeholder="example.com"></textarea>
+        <div class="row">
+          <button type="button" id="saveAllowList">Save allow-list</button>
         </div>
-        <p id="api-status" role="status"></p>
-      </form>
-    </section>
-    <section>
-      <h2>Domain Allow-list</h2>
-      <p>Add one domain per line. Leave empty to allow any site.</p>
-      <textarea id="allow-list" rows="6" placeholder="example.com"></textarea>
-      <button id="save-allow-list" type="button">Save Allow-list</button>
-    </section>
-    <section>
-      <h2>Safety Preferences</h2>
-      <label class="toggle">
-        <input type="checkbox" id="default-allow-instructions">
-        <span>Allow page instructions by default</span>
-      </label>
-    </section>
-  </main>
-  <script type="module" src="options.js"></script>
-</body>
+        <p class="status" id="allowStatus"></p>
+      </section>
+
+      <section class="card">
+        <h2>Debug</h2>
+        <p>Open <code>chrome://extensions</code>, enable developer mode, and inspect the background service worker for live logs.</p>
+      </section>
+    </main>
+    <script type="module" src="options.js"></script>
+  </body>
 </html>

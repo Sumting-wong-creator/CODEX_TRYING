@@ -1,239 +1,140 @@
-export async function streamGemini({ apiKey, payload, signal, onToken, onTool, onEnd, onError, model }) {
-  const modelPath = model && model.startsWith('models/') ? model : `models/${model || 'gemini-2.5-flash'}`;
-  const url = `https://generativelanguage.googleapis.com/v1beta/${modelPath}:streamGenerateContent?alt=sse&key=${encodeURIComponent(apiKey)}`;
-  console.debug('[HAWA][stream] dispatch', { modelPath });
+const DEFAULT_MODEL = 'gemini-2.5-flash';
 
-  let response;
+export async function streamGemini({
+  apiKey,
+  payload,
+  model = DEFAULT_MODEL,
+  signal,
+  onOpen,
+  onToken,
+  onComplete,
+  onError
+}) {
+  if (!apiKey) {
+    throw new Error('Missing Gemini API key.');
+  }
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:streamGenerateContent?key=${encodeURIComponent(apiKey)}`;
+
+  const toolCalls = [];
+
   try {
-    response = await fetch(url, {
+    const response = await fetch(url, {
       method: 'POST',
       headers: {
-        'Content-Type': 'application/json',
-        'Accept': 'text/event-stream',
-        'x-goog-api-key': apiKey
+        'Content-Type': 'application/json'
       },
       body: JSON.stringify(payload),
       signal
     });
-  } catch (error) {
-    if (error?.name === 'AbortError') {
-      console.debug('[HAWA][stream] aborted before response');
-      return { aborted: true };
+
+    if (onOpen) onOpen(response);
+
+    if (!response.ok) {
+      const message = await safeReadText(response);
+      throw new Error(message || `Gemini responded with ${response.status}`);
     }
-    console.error('[HAWA][stream] network failure', error);
-    onError?.(error);
-    throw error;
-  }
 
-  if (!response.ok || !response.body) {
-    const message = await response.text().catch(() => response.statusText);
-    const err = new Error(message || `HTTP ${response.status}`);
-    console.error('[HAWA][stream] http error', response.status, message);
-    onError?.(err);
-    throw err;
-  }
+    if (!response.body) {
+      throw new Error('Gemini returned an empty response body.');
+    }
 
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder('utf-8');
-  const aggregatedByIndex = new Map();
-  let finalCandidate = null;
-  let promptFeedback = null;
-  let usageMetadata = null;
-  let buffer = '';
-  let eventLines = [];
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder('utf-8');
+    let buffer = '';
+    let aggregateText = '';
+    let lastCandidate = null;
+    let promptFeedback = null;
+    let finished = false;
 
-  let finished = false;
-  try {
     while (!finished) {
       const { value, done } = await reader.read();
       if (done) break;
       buffer += decoder.decode(value, { stream: true });
-
-      let lineBreakIndex;
-      while ((lineBreakIndex = findNextLine(buffer)) !== -1) {
-        const nextChar = buffer[lineBreakIndex];
-        const sliceOffset = nextChar === '\r' && buffer[lineBreakIndex + 1] === '\n' ? 2 : 1;
-        const rawLine = buffer.slice(0, lineBreakIndex);
-        buffer = buffer.slice(lineBreakIndex + sliceOffset);
-        const line = rawLine.replace(/\r$/, '');
-
-        if (line === '') {
-          if (eventLines.length) {
-            const result = await flushEvent({
-              eventLines,
-              aggregatedByIndex,
-              onToken,
-              onTool,
-              onError,
-              state: { finalCandidate, promptFeedback, usageMetadata }
-            });
-            ({ finalCandidate, promptFeedback, usageMetadata, finished } = result);
-            eventLines = [];
-            if (finished) {
-              buffer = '';
-              reader.cancel?.().catch(() => {});
-              break;
-            }
-          }
-          continue;
+      while (true) {
+        const boundary = findBoundary(buffer);
+        if (boundary < 0) break;
+        const rawEvent = buffer.slice(0, boundary);
+        buffer = buffer.slice(boundary);
+        const dataPayload = extractData(rawEvent);
+        if (!dataPayload) continue;
+        if (dataPayload === '[DONE]') {
+          finished = true;
+          buffer = '';
+          break;
         }
-
-        if (line.startsWith('data:')) {
-          eventLines.push(line.slice(5).replace(/^\s*/, ''));
-        } else if (line.startsWith(':')) {
-          continue; // comment line
-        } else {
-          eventLines.push(line.trim());
-        }
-      }
-    }
-  } catch (error) {
-    if (error?.name === 'AbortError') {
-      console.debug('[HAWA][stream] aborted during read');
-      return { aborted: true };
-    }
-    console.error('[HAWA][stream] reader error', error);
-    onError?.(error);
-    throw error;
-  }
-
-  if (!finished && eventLines.length) {
-    const result = await flushEvent({
-      eventLines,
-      aggregatedByIndex,
-      onToken,
-      onTool,
-      onError,
-      state: { finalCandidate, promptFeedback, usageMetadata }
-    });
-    ({ finalCandidate, promptFeedback, usageMetadata, finished } = result);
-    eventLines = [];
-  }
-
-  const candidateToReturn = buildFinalCandidate(finalCandidate, aggregatedByIndex, promptFeedback, usageMetadata);
-  onEnd?.(candidateToReturn);
-  console.debug('[HAWA][stream] complete');
-  return { aborted: false, finalCandidate: candidateToReturn };
-}
-
-function findNextLine(buffer) {
-  const idx = buffer.indexOf('\n');
-  if (idx !== -1) return idx;
-  return buffer.indexOf('\r');
-}
-
-async function handleEvent({ json, aggregatedByIndex, onToken, onTool, finalCandidate, promptFeedback, usageMetadata }) {
-  if (json.promptFeedback) {
-    promptFeedback = json.promptFeedback;
-  }
-  if (json.usageMetadata) {
-    usageMetadata = json.usageMetadata;
-  }
-
-  const candidates = Array.isArray(json.candidates) ? json.candidates : [];
-  for (const candidate of candidates) {
-    finalCandidate = candidate;
-    const index = candidate?.index ?? 0;
-    const text = extractText(candidate);
-    const previous = aggregatedByIndex.get(index) ?? '';
-    if (typeof text === 'string') {
-      if (!aggregatedByIndex.has(index) || text !== previous) {
-        const delta = text.startsWith(previous) ? text.slice(previous.length) : text;
-        if (delta) {
-          try {
-            onToken?.(delta);
-          } catch (error) {
-            console.warn('[HAWA][stream] onToken handler failed', error);
-          }
-        }
-        aggregatedByIndex.set(index, text);
-      }
-    }
-
-    const parts = Array.isArray(candidate?.content?.parts) ? candidate.content.parts : [];
-    for (const part of parts) {
-      const fn = part.functionCall || part.function_call;
-      if (fn && onTool) {
         try {
-          await onTool({ name: fn.name, args: fn.args });
+          const parsed = JSON.parse(dataPayload);
+          if (parsed.candidates?.length) {
+            parsed.candidates.forEach(candidate => {
+              lastCandidate = candidate;
+              candidate.content?.parts?.forEach(part => {
+                if (part.text) {
+                  aggregateText += part.text;
+                  if (onToken) onToken(part.text);
+                }
+                if (part.functionCall) {
+                  toolCalls.push(part.functionCall);
+                }
+                if (part.function_call) {
+                  toolCalls.push(part.function_call);
+                }
+              });
+            });
+          }
+          if (parsed.promptFeedback) {
+            promptFeedback = parsed.promptFeedback;
+          }
         } catch (error) {
-          console.warn('[HAWA][stream] onTool handler failed', error);
+          console.warn('[HAWA][stream] Failed to parse chunk', error, dataPayload);
         }
       }
     }
-  }
 
-  return { finalCandidate, promptFeedback, usageMetadata };
-}
-
-function extractText(candidate) {
-  if (!candidate?.content?.parts) return '';
-  return candidate.content.parts
-    .filter(part => typeof part.text === 'string')
-    .map(part => part.text)
-    .join('');
-}
-
-async function flushEvent({ eventLines, aggregatedByIndex, onToken, onTool, onError, state }) {
-  let { finalCandidate, promptFeedback, usageMetadata } = state;
-  const payloadText = eventLines.join('\n').trim();
-  if (!payloadText) {
-    return { finalCandidate, promptFeedback, usageMetadata, finished: false };
-  }
-  if (payloadText === '[DONE]') {
-    return { finalCandidate, promptFeedback, usageMetadata, finished: true };
-  }
-  try {
-    const json = JSON.parse(payloadText);
-    if (json.error) {
-      const err = new Error(json.error.message || 'Gemini API error');
-      err.details = json.error;
-      onError?.(err);
-      throw err;
+    if (!aggregateText && lastCandidate) {
+      aggregateText = lastCandidate.content?.parts?.map(part => part.text || '').join('') || '';
     }
-    ({ finalCandidate, promptFeedback, usageMetadata } = await handleEvent({
-      json,
-      aggregatedByIndex,
-      onToken,
-      onTool,
-      finalCandidate,
-      promptFeedback,
-      usageMetadata
-    }));
+
+    if (onComplete) {
+      onComplete({
+        text: aggregateText,
+        candidate: lastCandidate,
+        promptFeedback,
+        toolCalls
+      });
+    }
   } catch (error) {
-    console.warn('[HAWA][stream] event parse failed', error, payloadText);
+    if (onError) {
+      onError(error);
+    } else {
+      throw error;
+    }
   }
-  return { finalCandidate, promptFeedback, usageMetadata, finished: false };
 }
 
-function buildFinalCandidate(finalCandidate, aggregatedByIndex, promptFeedback, usageMetadata) {
-  if (!finalCandidate) {
-    const text = aggregatedByIndex.get(0) ?? '';
-    return {
-      content: { parts: text ? [{ text }] : [] },
-      promptFeedback,
-      usageMetadata
-    };
+function findBoundary(buffer) {
+  const carriage = buffer.indexOf('\r\n\r\n');
+  const newline = buffer.indexOf('\n\n');
+  if (carriage >= 0 && (newline < 0 || carriage < newline)) {
+    return carriage + 4;
   }
-  const index = finalCandidate.index ?? 0;
-  const aggregatedText = aggregatedByIndex.get(index);
-  if (typeof aggregatedText === 'string') {
-    const otherParts = (finalCandidate.content?.parts || []).filter(part => typeof part.text !== 'string');
-    finalCandidate = {
-      ...finalCandidate,
-      content: {
-        parts: [
-          ...(aggregatedText ? [{ text: aggregatedText }] : []),
-          ...otherParts
-        ]
-      }
-    };
+  return newline >= 0 ? newline + 2 : -1;
+}
+
+function extractData(rawEvent) {
+  const lines = rawEvent.split(/\r?\n/);
+  let data = '';
+  for (const line of lines) {
+    if (line.startsWith('data:')) {
+      data += line.slice(5).trim();
+    }
   }
-  if (promptFeedback && !finalCandidate.promptFeedback) {
-    finalCandidate = { ...finalCandidate, promptFeedback };
+  return data.trim();
+}
+
+async function safeReadText(response) {
+  try {
+    return await response.text();
+  } catch (error) {
+    return '';
   }
-  if (usageMetadata && !finalCandidate.usageMetadata) {
-    finalCandidate = { ...finalCandidate, usageMetadata };
-  }
-  return finalCandidate;
 }

@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "HAWA (Hyper Agentic Web Assistant)",
-  "description": "Offline-first Hyper Agentic Web Assistant with Gemini 2.5 Flash streaming integration.",
+  "description": "HAWA is a cautious, agentic browsing copilot powered by Gemini 2.5 Flash.",
   "version": "1.0.0",
   "permissions": [
     "activeTab",
@@ -24,7 +24,7 @@
     "default_path": "sidebar.html"
   },
   "action": {
-    "default_title": "HAWA (Hyper Agentic Web Assistant)"
+    "default_title": "Open HAWA"
   },
   "options_page": "options.html",
   "content_scripts": [

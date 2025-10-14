@@ -1,117 +1,75 @@
-function escapeHtml(text) {
-  return text.replace(/[&<>"']/g, char => ({
-    '&': '&amp;',
-    '<': '&lt;',
-    '>': '&gt;',
-    '"': '&quot;',
-    "'": '&#39;'
-  })[char]);
+function escapeHtml(value) {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
-export function markdownToHtml(markdown) {
-  if (!markdown) return '';
-  const lines = markdown.split(/\r?\n/);
-  const html = [];
-  let inCode = false;
-  let codeLang = '';
-  const listStack = [];
+function restoreCodeBlocks(html, blocks) {
+  return blocks.reduce((acc, block, index) => {
+    const token = `__CODE_BLOCK_${index}__`;
+    const escaped = escapeHtml(block.code);
+    const languageClass = block.lang ? ` class="language-${block.lang}"` : '';
+    const replacement = `<pre><code${languageClass}>${escaped}</code></pre>`;
+    return acc.replace(token, replacement);
+  }, html);
+}
 
-  const closeLists = level => {
-    while (listStack.length > level) {
-      html.push('</ul>');
-      listStack.pop();
-    }
-  };
-
-  lines.forEach(line => {
-    const fenceMatch = line.match(/^```(.*)/);
-    if (fenceMatch) {
-      if (inCode) {
-        html.push(`</code></pre>`);
-        inCode = false;
-        codeLang = '';
-      } else {
-        inCode = true;
-        codeLang = fenceMatch[1].trim();
-        const className = codeLang ? ` class="language-${escapeHtml(codeLang)}"` : '';
-        html.push(`<pre dir="auto"><code${className}>`);
-      }
-      return;
-    }
-
-    if (inCode) {
-      html.push(`${escapeHtml(line)}\n`);
-      return;
-    }
-
-    const heading = line.match(/^(#{1,6})\s+(.*)$/);
-    if (heading) {
-      closeLists(0);
-      const level = heading[1].length;
-      html.push(`<h${level} dir="auto">${inlineFormat(heading[2])}</h${level}>`);
-      return;
-    }
-
-    const list = line.match(/^([*+-]|\d+\.)\s+(.*)$/);
-    if (list) {
-      const level = listStack.length;
-      if (!listStack.length) {
-        html.push('<ul>');
-        listStack.push('ul');
-      }
-      html.push(`<li dir="auto">${inlineFormat(list[2])}</li>`);
-      return;
-    }
-
-    closeLists(0);
-    if (line.trim() === '') {
-      html.push('');
-      return;
-    }
-    html.push(`<p dir="auto">${inlineFormat(line)}</p>`);
-  });
-
-  if (inCode) {
-    html.push('</code></pre>');
+function buildLists(paragraph) {
+  const lines = paragraph.split(/\n/);
+  if (!lines.every(line => /^[-*]\s+/.test(line))) {
+    return `<p>${paragraph.replace(/\n/g, '<br>')}</p>`;
   }
-  closeLists(0);
-  return html.join('\n');
+  const items = lines.map(line => `<li>${line.replace(/^[-*]\s+/, '')}</li>`).join('');
+  return `<ul>${items}</ul>`;
 }
 
-function inlineFormat(text) {
+function convertMarkdown(text) {
   if (!text) return '';
-  let result = escapeHtml(text);
-  result = result.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
-  result = result.replace(/\*(.+?)\*/g, '<em>$1</em>');
-  result = result.replace(/`([^`]+)`/g, '<code>$1</code>');
-  result = result.replace(/\[(.+?)\]\((https?:[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
-  return result;
+  const codeBlocks = [];
+  let replaced = text.replace(/```(\w+)?\n([\s\S]*?)```/g, (_, lang = '', code = '') => {
+    const token = `__CODE_BLOCK_${codeBlocks.length}__`;
+    codeBlocks.push({ lang: lang.trim(), code });
+    return token;
+  });
+
+  replaced = escapeHtml(replaced);
+  replaced = replaced.replace(/^###\s+(.+)$/gm, '<h3>$1</h3>');
+  replaced = replaced.replace(/^##\s+(.+)$/gm, '<h2>$1</h2>');
+  replaced = replaced.replace(/^#\s+(.+)$/gm, '<h1>$1</h1>');
+  replaced = replaced.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+  replaced = replaced.replace(/\*(.+?)\*/g, '<em>$1</em>');
+  replaced = replaced.replace(/`([^`]+)`/g, '<code>$1</code>');
+  replaced = replaced.replace(/\[(.+?)\]\((https?:[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+
+  const paragraphs = replaced.trim().split(/\n{2,}/);
+  const html = paragraphs.map(paragraph => {
+    if (/^([-*]\s+)/.test(paragraph.trim())) {
+      return buildLists(paragraph.trim());
+    }
+    return `<p>${paragraph.replace(/\n/g, '<br>')}</p>`;
+  }).join('');
+
+  return restoreCodeBlocks(html, codeBlocks);
 }
 
-export function sanitizeHtml(html) {
-  const parser = new DOMParser();
-  const doc = parser.parseFromString(html, 'text/html');
-  const disallowed = ['script', 'style', 'iframe', 'object'];
-  disallowed.forEach(tag => {
-    doc.querySelectorAll(tag).forEach(node => node.remove());
-  });
-  doc.querySelectorAll('*').forEach(node => {
-    Array.from(node.attributes).forEach(attr => {
-      if (/^on/i.test(attr.name) || attr.name === 'style') {
-        node.removeAttribute(attr.name);
-      }
-      if (attr.name === 'href' && node.getAttribute('href') && !/^https?:/i.test(node.getAttribute('href'))) {
-        node.removeAttribute('href');
-      }
+export function renderMarkdown(container, text) {
+  const html = convertMarkdown(text);
+  container.innerHTML = html;
+  if (window.hljs) {
+    container.querySelectorAll('pre code').forEach(block => {
+      window.hljs.highlightElement(block);
     });
-  });
-  return doc.body.innerHTML;
+  }
 }
 
-export function renderMarkdown(target, markdown) {
-  const html = sanitizeHtml(markdownToHtml(markdown));
-  target.innerHTML = html;
-  if (window.hljs && typeof window.hljs.highlightAll === 'function') {
-    window.hljs.highlightAll();
-  }
+export function stripMarkdown(text) {
+  return text
+    .replace(/```[\s\S]*?```/g, '')
+    .replace(/`([^`]+)`/g, '$1')
+    .replace(/\[(.+?)\]\((.+?)\)/g, '$1')
+    .replace(/[*_#>-]/g, '')
+    .trim();
 }

@@ -1,144 +1,129 @@
 import { encryptText, decryptText } from './utils/crypto.js';
 
-const apiForm = document.getElementById('api-form');
-const apiKeyInput = document.getElementById('api-key');
-const enableEncryption = document.getElementById('enable-encryption');
-const passphraseField = document.getElementById('passphrase-field');
+const keyForm = document.getElementById('keyForm');
+const apiKeyInput = document.getElementById('apiKey');
+const encryptToggle = document.getElementById('encryptToggle');
 const passphraseInput = document.getElementById('passphrase');
-const unlockBtn = document.getElementById('unlock');
-const testBtn = document.getElementById('test-key');
-const statusEl = document.getElementById('api-status');
-const allowListTextarea = document.getElementById('allow-list');
-const saveAllowListBtn = document.getElementById('save-allow-list');
-const defaultAllowInstructions = document.getElementById('default-allow-instructions');
-
-let apiKeyData = null;
+const keyStatus = document.getElementById('keyStatus');
+const unlockBtn = document.getElementById('unlockBtn');
+const lockBtn = document.getElementById('lockBtn');
+const testBtn = document.getElementById('testBtn');
+const allowListArea = document.getElementById('allowList');
+const allowStatus = document.getElementById('allowStatus');
+const saveAllowBtn = document.getElementById('saveAllowList');
 
 init();
 
-async function init() {
-  const stored = await chrome.storage.local.get(['apiKeyData', 'settings', 'apiKeyCache']);
-  apiKeyData = stored.apiKeyData || null;
-  if (apiKeyData) {
-    if (apiKeyData.encrypted) {
-      enableEncryption.checked = true;
-      passphraseField.hidden = false;
-    } else if (apiKeyData.value) {
-      apiKeyInput.value = apiKeyData.value;
-    }
-  }
-  if (stored.settings) {
-    allowListTextarea.value = (stored.settings.allowList || []).join('\n');
-    defaultAllowInstructions.checked = !!stored.settings.allowInstructions;
-  }
-  enableEncryption.addEventListener('change', () => {
-    passphraseField.hidden = !enableEncryption.checked;
-  });
+function init() {
+  hydrate();
+  keyForm.addEventListener('submit', handleSaveKey);
+  unlockBtn.addEventListener('click', handleUnlock);
+  lockBtn.addEventListener('click', handleLock);
+  testBtn.addEventListener('click', handleTest);
+  saveAllowBtn.addEventListener('click', handleSaveAllowList);
 }
 
-apiForm.addEventListener('submit', async event => {
+async function hydrate() {
+  const { apiKeyData, apiKeyCache, settings } = await chrome.storage.local.get(['apiKeyData', 'apiKeyCache', 'settings']);
+  if (apiKeyData) {
+    encryptToggle.checked = Boolean(apiKeyData.encrypted);
+    if (!apiKeyData.encrypted && apiKeyData.value) {
+      apiKeyInput.value = apiKeyData.value;
+    }
+    if (apiKeyData.encrypted) {
+      keyStatus.textContent = 'API key stored encrypted. Provide passphrase to unlock when needed.';
+    }
+  } else {
+    keyStatus.textContent = 'API key not configured.';
+  }
+  if (apiKeyCache?.value && apiKeyCache.expiresAt > Date.now()) {
+    const minutes = Math.round((apiKeyCache.expiresAt - Date.now()) / 60000);
+    keyStatus.textContent = `API key unlocked for ${minutes} more minute(s).`;
+  }
+  if (settings?.allowList?.length) {
+    allowListArea.value = settings.allowList.join('\n');
+  }
+}
+
+async function handleSaveKey(event) {
   event.preventDefault();
   const apiKey = apiKeyInput.value.trim();
   if (!apiKey) {
-    showStatus('Enter your Gemini API key.', 'error');
+    keyStatus.textContent = 'Enter an API key first.';
     return;
   }
-  if (enableEncryption.checked) {
-    const passphrase = passphraseInput.value;
+  let payload;
+  if (encryptToggle.checked) {
+    const passphrase = passphraseInput.value.trim();
     if (!passphrase) {
-      showStatus('Passphrase required for encryption.', 'error');
+      keyStatus.textContent = 'Enter a passphrase to encrypt the key.';
       return;
     }
     try {
-      const encrypted = await encryptText(apiKey, passphrase);
-      apiKeyData = { encrypted: true, ...encrypted };
-      await chrome.storage.local.set({ apiKeyData, apiKeyCache: null });
-      showStatus('Encrypted API key saved.', 'success');
-      apiKeyInput.value = '';
+      const encrypted = await encryptText(passphrase, apiKey);
+      payload = { encrypted: true, payload: encrypted };
+      keyStatus.textContent = 'Encrypted key saved. Unlock when you start chatting.';
     } catch (error) {
-      showStatus(`Encryption failed: ${error.message}`, 'error');
+      keyStatus.textContent = `Encryption failed: ${error.message}`;
+      return;
     }
   } else {
-    apiKeyData = { encrypted: false, value: apiKey };
-    await chrome.storage.local.set({ apiKeyData });
-    showStatus('API key saved.', 'success');
+    payload = { encrypted: false, value: apiKey };
+    keyStatus.textContent = 'API key saved.';
   }
-});
+  await chrome.runtime.sendMessage({ type: 'store-api-key', payload });
+}
 
-unlockBtn.addEventListener('click', async () => {
-  if (!apiKeyData || !apiKeyData.encrypted) {
-    showStatus('No encrypted key to unlock.', 'error');
+async function handleUnlock() {
+  const { apiKeyData } = await chrome.storage.local.get('apiKeyData');
+  if (!apiKeyData) {
+    keyStatus.textContent = 'No API key stored yet.';
     return;
   }
-  const passphrase = passphraseInput.value;
-  if (!passphrase) {
-    showStatus('Enter your passphrase to unlock.', 'error');
-    return;
-  }
-  try {
-    const decrypted = await decryptText(apiKeyData, passphrase);
-    await chrome.storage.local.set({ apiKeyCache: { value: decrypted, expiresAt: Date.now() + 30 * 60 * 1000 } });
-    showStatus('API key unlocked for 30 minutes.', 'success');
-  } catch (error) {
-    showStatus(`Unlock failed: ${error.message}`, 'error');
-  }
-});
-
-testBtn.addEventListener('click', async () => {
-  const apiKey = await getActiveApiKey();
-  if (!apiKey) {
-    showStatus('Provide or unlock your API key before testing.', 'error');
-    return;
-  }
-  showStatus('Testing API key...', 'info');
-  try {
-    const response = await chrome.runtime.sendMessage({ type: 'test-api-key', apiKey });
-    if (response?.ok) {
-      showStatus('API key test succeeded.', 'success');
-    } else {
-      showStatus(`API key test failed: ${response?.error || 'unknown error'}`, 'error');
+  if (!apiKeyData.encrypted) {
+    if (apiKeyData.value) {
+      await chrome.runtime.sendMessage({ type: 'unlock-api-key', value: apiKeyData.value, ttlMinutes: 30 });
+      keyStatus.textContent = 'API key unlocked for 30 minutes.';
     }
+    return;
+  }
+  const passphrase = passphraseInput.value.trim();
+  if (!passphrase) {
+    keyStatus.textContent = 'Enter the passphrase to unlock the key.';
+    return;
+  }
+  try {
+    const decrypted = await decryptText(passphrase, apiKeyData.payload);
+    await chrome.runtime.sendMessage({ type: 'unlock-api-key', value: decrypted, ttlMinutes: 30 });
+    keyStatus.textContent = 'API key unlocked for 30 minutes.';
   } catch (error) {
-    showStatus(`API key test failed: ${error.message}`, 'error');
+    keyStatus.textContent = 'Unable to unlock. Check the passphrase.';
   }
-});
-
-saveAllowListBtn.addEventListener('click', async () => {
-  const domains = allowListTextarea.value
-    .split(/\r?\n/)
-    .map(line => line.trim().toLowerCase())
-    .filter(Boolean);
-  const settings = await getSettings();
-  settings.allowList = domains;
-  await chrome.storage.local.set({ settings });
-  showStatus('Allow-list updated.', 'success');
-});
-
-defaultAllowInstructions.addEventListener('change', async () => {
-  const settings = await getSettings();
-  settings.allowInstructions = defaultAllowInstructions.checked;
-  await chrome.storage.local.set({ settings });
-  showStatus('Safety preference updated.', 'success');
-});
-
-async function getSettings() {
-  const { settings } = await chrome.storage.local.get('settings');
-  return { allowList: [], allowInstructions: false, ...(settings || {}) };
 }
 
-async function getActiveApiKey() {
-  const inputKey = apiKeyInput.value.trim();
-  if (inputKey) return inputKey;
-  if (!apiKeyData) return null;
-  if (!apiKeyData.encrypted) return apiKeyData.value;
-  const { apiKeyCache } = await chrome.storage.local.get('apiKeyCache');
-  if (apiKeyCache?.value && apiKeyCache.expiresAt > Date.now()) {
-    return apiKeyCache.value;
-  }
-  return null;
+async function handleLock() {
+  await chrome.runtime.sendMessage({ type: 'lock-api-key' });
+  keyStatus.textContent = 'API key cache cleared.';
 }
 
-function showStatus(message, status) {
-  statusEl.textContent = message;
-  statusEl.dataset.status = status;
+async function handleTest() {
+  const key = apiKeyInput.value.trim();
+  if (!key) {
+    keyStatus.textContent = 'Enter a key in the field above to test.';
+    return;
+  }
+  keyStatus.textContent = 'Testing…';
+  try {
+    await chrome.runtime.sendMessage({ type: 'test-api-key', apiKey: key });
+    keyStatus.textContent = 'Gemini API responded successfully.';
+  } catch (error) {
+    keyStatus.textContent = `Test failed: ${error.message}`;
+  }
+}
+
+async function handleSaveAllowList() {
+  const raw = allowListArea.value.split(/\n+/).map((item) => item.trim().toLowerCase()).filter(Boolean);
+  const unique = Array.from(new Set(raw));
+  await chrome.storage.local.set({ settings: { allowList: unique } });
+  allowStatus.textContent = `Saved ${unique.length} domain(s).`;
 }

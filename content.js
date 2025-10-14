@@ -1,527 +1,301 @@
-const port = chrome.runtime.connect({ name: 'content' });
+const contentPort = chrome.runtime.connect({ name: 'content' });
+let allowPageInstructions = false;
+let agentOverlay = null;
+let agentActive = false;
+let agentSessionId = null;
 
-const TOOL_TIMEOUT = 15000;
-let topbarFrame = null;
-let agentOverlayEl = null;
-let agentOverlayStyleEl = null;
-let agentOverlayActive = false;
+contentPort.onDisconnect.addListener(() => {
+  console.debug('[HAWA][content] Port disconnected');
+});
 
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (!message) return;
-  if (message.type === 'read-page') {
-    handleReadPage(message.args || {})
-      .then(payload => {
-        port.postMessage({ type: 'read-page-ready', payload });
-      })
-      .catch(error => {
-        port.postMessage({ type: 'read-page-error', error: error.message });
+  switch (message.type) {
+    case 'read-page':
+      allowPageInstructions = Boolean(message.args?.allowInstructions);
+      readPage().then(payload => {
+        contentPort.postMessage({ type: 'read-page-ready', payload });
+        sendResponse && sendResponse({ ok: true, payload });
+      }).catch(error => {
+        contentPort.postMessage({ type: 'read-page-error', error: error.message });
+        sendResponse && sendResponse({ ok: false, error: error.message });
       });
-    sendResponse({ ok: true });
-    return true;
-  }
-  if (message.type === 'execute-tool') {
-    executeTool(message.tool, message.args || {}, message.toolCallId).catch(error => {
-      port.postMessage({ type: 'tool-error', toolCallId: message.toolCallId, error: error.message });
-    });
-    sendResponse({ ok: true });
-    return true;
-  }
-  if (message.type === 'inject-topbar') {
-    renderTopbar(message.summary || {});
-    sendResponse({ ok: true });
-  }
-  if (message.type === 'sidebar-open-request') {
-    chrome.runtime.sendMessage({ type: 'open-sidebar' });
-    sendResponse({ ok: true });
-  }
-  if (message.type === 'agent-overlay') {
-    if (message.active) {
-      showAgentOverlay(message);
-    } else {
+      return true;
+    case 'execute-tool':
+      executeTool(message.tool, message.args || {}, message.toolCallId)
+        .then(result => {
+          contentPort.postMessage({ type: 'tool-result', toolCallId: message.toolCallId, result });
+        })
+        .catch(error => {
+          contentPort.postMessage({ type: 'tool-error', toolCallId: message.toolCallId, error: error.message });
+        });
+      break;
+    case 'agent-overlay-show':
+      showAgentOverlay(message.sessionId);
+      break;
+    case 'agent-overlay-hide':
       hideAgentOverlay();
-    }
-    sendResponse({ ok: true });
+      break;
+    case 'agent-overlay-status':
+      if (agentOverlay) {
+        agentOverlay.querySelector('[data-status]').textContent = message.status || '';
+      }
+      break;
+    case 'inject-topbar':
+      injectTopbar(message.summary || '');
+      break;
+    default:
+      break;
   }
 });
 
-async function handleReadPage(args) {
-  const selection = getSelectionText();
-  const headings = Array.from(document.querySelectorAll('h1, h2, h3')).map(el => ({
-    tag: el.tagName,
-    text: el.textContent.trim().slice(0, 200)
-  }));
-  const language = document.documentElement.getAttribute('lang') || navigator.language || '';
-  const instructions = collectPageInstructions(args.allowInstructions);
-  const priceCandidates = detectPrices();
-  const meta = {
-    description: getMetaContent('description'),
-    ogTitle: getMetaContent('og:title'),
-    ogDescription: getMetaContent('og:description')
-  };
+async function readPage() {
+  const selection = window.getSelection?.()?.toString() || '';
+  const headings = Array.from(document.querySelectorAll('h1, h2, h3')).slice(0, 12).map(el => collapseWhitespace(el.textContent));
+  const priceCandidates = findPrices();
+  const instructions = allowPageInstructions ? collectInstructionBlocks() : [];
   return {
     url: location.href,
     title: document.title,
-    selection,
+    selection: collapseWhitespace(selection),
     headings,
-    instructions,
     priceCandidates,
-    language,
-    meta
+    instructions,
+    timestamp: Date.now()
   };
 }
 
-function getSelectionText() {
-  const selection = window.getSelection();
-  if (!selection || selection.rangeCount === 0) return '';
-  return selection.toString().trim().slice(0, 4000);
-}
-
-function collectPageInstructions(allowInstructions) {
-  const nodes = [];
-  const metaTags = document.querySelectorAll('meta[name*="instruction" i], meta[name*="prompt" i], meta[name*="directive" i]');
-  metaTags.forEach(tag => {
-    const content = tag.getAttribute('content');
-    if (content) nodes.push(content.trim());
-  });
-  const dataAttr = document.querySelectorAll('[data-agent-instructions], [data-ai-instructions]');
-  dataAttr.forEach(el => {
-    const txt = el.getAttribute('data-agent-instructions') || el.getAttribute('data-ai-instructions');
-    if (txt) nodes.push(txt.trim());
-  });
-  const sanitized = nodes.filter(Boolean).map(s => s.slice(0, 2000));
-  if (allowInstructions) {
-    return sanitized;
+function findPrices() {
+  const textContent = document.body?.innerText || '';
+  const regex = /(₪\s?\d+(?:[,.]\d+)?|\$\s?\d+(?:[,.]\d+)?|חינם)/g;
+  const matches = new Set();
+  let match;
+  while ((match = regex.exec(textContent)) !== null) {
+    matches.add(match[0]);
+    if (matches.size >= 8) break;
   }
-  return sanitized.filter(item => !isPromptInjection(item));
+  return Array.from(matches);
 }
 
-function isPromptInjection(text) {
-  const lowered = text.toLowerCase();
-  return /ignore (all|any|previous)/.test(lowered) ||
-    /(disable|turn off) (safety|guard)/.test(lowered) ||
-    /(forget|wipe) (instructions|memory)/.test(lowered) ||
-    /click\s+allow/.test(lowered);
-}
-
-function detectPrices() {
-  const priceRegex = /(₪\s?\d+[\d,.]*|\$\s?\d+[\d,.]*|חינם)/g;
-  const matches = [];
-  const walker = document.createTreeWalker(document.body || document.documentElement, NodeFilter.SHOW_TEXT, {
-    acceptNode(node) {
-      if (!node.nodeValue) return NodeFilter.FILTER_REJECT;
-      if (node.nodeValue.trim().length < 2) return NodeFilter.FILTER_REJECT;
-      priceRegex.lastIndex = 0;
-      if (!priceRegex.test(node.nodeValue)) return NodeFilter.FILTER_SKIP;
-      return NodeFilter.FILTER_ACCEPT;
-    }
-  });
-  let current;
-  while ((current = walker.nextNode())) {
-    const text = current.nodeValue.trim();
-    const context = current.parentElement ? current.parentElement.innerText.trim().slice(0, 200) : text;
-    const found = text.match(priceRegex) || [];
-    found.forEach(price => {
-      matches.push({ price, context });
-    });
-  }
-  return matches.slice(0, 20);
-}
-
-function getMetaContent(name) {
-  const el = document.querySelector(`meta[name="${name}"]`) || document.querySelector(`meta[property="${name}"]`);
-  return el ? (el.getAttribute('content') || '').trim() : '';
+function collectInstructionBlocks() {
+  const elements = Array.from(document.querySelectorAll('[data-instruction], script[type="application/json"], meta[name*="instruction" i]'));
+  return elements.slice(0, 10).map(el => {
+    if (el.dataset?.instruction) return collapseWhitespace(el.dataset.instruction);
+    if (el.tagName === 'SCRIPT') return collapseWhitespace(el.textContent);
+    if (el.tagName === 'META') return collapseWhitespace(el.getAttribute('content') || '');
+    return collapseWhitespace(el.textContent || '');
+  }).filter(Boolean);
 }
 
 async function executeTool(tool, args, toolCallId) {
-  try {
-    let result;
-    switch (tool) {
-      case 'click':
-        result = await performClick(args);
-        break;
-      case 'type':
-        result = await performType(args);
-        break;
-      case 'scrollTo':
-        result = await performScroll(args);
-        break;
-      default:
-        throw new Error(`Unsupported tool ${tool}`);
-    }
-    port.postMessage({ type: 'tool-result', toolCallId, result });
-  } catch (error) {
-    port.postMessage({ type: 'tool-error', toolCallId, error: error.message });
+  switch (tool) {
+    case 'click':
+      return handleClick(args, toolCallId);
+    case 'type':
+      return handleType(args);
+    case 'scrollTo':
+      return handleScroll(args);
+    default:
+      throw new Error(`Unsupported tool: ${tool}`);
   }
 }
 
-function showAgentOverlay({ conversationId }) {
-  if (agentOverlayActive) {
-    updateAgentOverlay(conversationId);
-    return;
+async function handleClick(args, toolCallId) {
+  const element = locateElement(args);
+  if (!element) {
+    throw new Error('No matching element to click.');
   }
-  ensureAgentOverlayStyles();
-  agentOverlayEl = document.createElement('div');
-  agentOverlayEl.className = 'hawa-agent-overlay';
-  agentOverlayEl.innerHTML = `
-    <div class="hawa-agent-top">
-      <button type="button" class="hawa-agent-stop" title="Stop agent task" aria-label="Emergency stop">E STOP</button>
-      <div class="hawa-agent-status" role="status">Agent mode active &mdash; HAWA is working</div>
-    </div>
-  `;
-  const stopBtn = agentOverlayEl.querySelector('.hawa-agent-stop');
-  stopBtn.addEventListener('click', () => {
-    chrome.runtime.sendMessage({ type: 'agent-estop' });
-    hideAgentOverlay();
-  });
-  document.documentElement.appendChild(agentOverlayEl);
-  updateAgentOverlay(conversationId);
-  agentOverlayActive = true;
+  if (requiresConfirmation(args)) {
+    const confirmed = await confirmStep(args.intent || 'Are you sure?');
+    if (!confirmed) {
+      throw new Error('User cancelled action.');
+    }
+  }
+  element.focus({ preventScroll: true });
+  element.click();
+  return { clicked: true };
 }
 
-function updateAgentOverlay(conversationId) {
-  if (!agentOverlayEl) return;
-  const status = agentOverlayEl.querySelector('.hawa-agent-status');
-  if (status) {
-    status.textContent = conversationId
-      ? `Agent mode active — session ${conversationId.slice(0, 8)}`
-      : 'Agent mode active — HAWA is working';
+async function handleType(args) {
+  const element = locateElement(args);
+  if (!element) {
+    throw new Error('No matching element to type into.');
   }
+  const value = String(args.value ?? '');
+  element.focus({ preventScroll: false });
+  if (args.replace || element.tagName === 'INPUT' || element.tagName === 'TEXTAREA') {
+    element.value = value;
+    element.dispatchEvent(new Event('input', { bubbles: true }));
+    element.dispatchEvent(new Event('change', { bubbles: true }));
+  } else {
+    element.textContent = value;
+  }
+  return { typed: true };
 }
 
-function hideAgentOverlay() {
-  agentOverlayActive = false;
-  if (agentOverlayEl) {
-    agentOverlayEl.remove();
-    agentOverlayEl = null;
+async function handleScroll(args) {
+  if (args.selector) {
+    const element = document.querySelector(args.selector);
+    if (element) {
+      element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      return { scrolled: true };
+    }
   }
+  if (typeof args.position === 'string') {
+    if (args.position === 'top') window.scrollTo({ top: 0, behavior: 'smooth' });
+    if (args.position === 'bottom') window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
+    return { scrolled: true };
+  }
+  window.scrollBy({ top: 200, behavior: 'smooth' });
+  return { scrolled: true };
 }
 
-function ensureAgentOverlayStyles() {
-  if (agentOverlayStyleEl) return;
-  const styles = document.createElement('style');
-  styles.id = 'hawa-agent-overlay-styles';
-  styles.textContent = `
-    .hawa-agent-overlay {
-      position: fixed;
-      inset: 0;
-      pointer-events: none;
-      z-index: 2147483646;
-      animation: hawa-overlay-fade 320ms ease;
-    }
-    .hawa-agent-overlay::before,
-    .hawa-agent-overlay::after {
-      content: '';
-      position: absolute;
-      top: 0;
-      bottom: 0;
-      width: 140px;
-      background: linear-gradient(180deg, rgba(109, 91, 255, 0.32), rgba(109, 91, 255, 0.08));
-      filter: blur(30px);
-      opacity: 0.8;
-      animation: hawa-overlay-glow 3.6s ease-in-out infinite alternate;
-    }
-    .hawa-agent-overlay::before { left: 0; }
-    .hawa-agent-overlay::after { right: 0; }
-    .hawa-agent-top {
-      position: absolute;
-      top: 20px;
-      left: 20px;
-      display: flex;
-      align-items: center;
-      gap: 18px;
-      pointer-events: auto;
-      font-family: 'Inter', 'Segoe UI', system-ui, sans-serif;
-    }
-    .hawa-agent-stop {
-      background: radial-gradient(circle at 30% 30%, #ff7b7b, #d72638);
-      color: #ffffff;
-      border: none;
-      border-radius: 999px;
-      padding: 10px 22px;
-      font-weight: 700;
-      letter-spacing: 0.25em;
-      text-transform: uppercase;
-      box-shadow: 0 16px 32px rgba(215, 38, 56, 0.45);
-      cursor: pointer;
-      transition: transform 160ms ease, box-shadow 160ms ease;
-    }
-    .hawa-agent-stop:hover {
-      transform: translateY(-2px) scale(1.03);
-      box-shadow: 0 24px 40px rgba(215, 38, 56, 0.55);
-    }
-    .hawa-agent-status {
-      pointer-events: auto;
-      padding: 10px 18px;
-      border-radius: 999px;
-      font-size: 0.75rem;
-      letter-spacing: 0.18em;
-      text-transform: uppercase;
-      background: rgba(109, 91, 255, 0.3);
-      color: #fff;
-      border: 1px solid rgba(255, 255, 255, 0.4);
-      backdrop-filter: blur(14px);
-    }
-    @media (prefers-color-scheme: light) {
-      .hawa-agent-status {
-        color: #1b1f2f;
-        border-color: rgba(109, 91, 255, 0.45);
-        background: rgba(109, 91, 255, 0.18);
-      }
-    }
-    @keyframes hawa-overlay-glow {
-      from {
-        opacity: 0.6;
-        transform: scaleX(0.98);
-      }
-      to {
-        opacity: 0.95;
-        transform: scaleX(1.06);
-      }
-    }
-    @keyframes hawa-overlay-fade {
-      from {
-        opacity: 0;
-      }
-      to {
-        opacity: 1;
-      }
-    }
-  `;
-  (document.head || document.documentElement).appendChild(styles);
-  agentOverlayStyleEl = styles;
-}
-
-function resolveElement({ selector, text, role }) {
-  if (selector) {
-    const el = document.querySelector(selector);
-    if (el) return el;
+function locateElement(args) {
+  if (args.selector) {
+    const found = document.querySelector(args.selector);
+    if (found) return found;
   }
-  if (role) {
-    const byRole = document.querySelectorAll(`[role="${role}"]`);
-    for (const candidate of byRole) {
-      if (!text || candidate.innerText.trim().toLowerCase().includes(text.toLowerCase())) {
-        return candidate;
-      }
-    }
+  if (args.role) {
+    const candidate = document.querySelector(`[role="${CSS.escape(args.role)}"]`);
+    if (candidate) return candidate;
   }
-  if (text) {
-    const candidates = Array.from(document.querySelectorAll('button, a, [role], input[type="submit"], input[type="button"], summary'));
-    for (const candidate of candidates) {
-      const compare = (candidate.innerText || candidate.value || '').trim().toLowerCase();
-      if (compare && compare.includes(text.toLowerCase())) {
-        return candidate;
+  if (args.text) {
+    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_ELEMENT, null);
+    while (walker.nextNode()) {
+      const node = walker.currentNode;
+      if (node.childElementCount > 0) continue;
+      if (collapseWhitespace(node.textContent || '').toLowerCase().includes(args.text.toLowerCase())) {
+        return node.parentElement || node;
       }
-    }
-    const xpath = document.evaluate(`//*[contains(translate(normalize-space(text()), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), ${JSON.stringify(text.toLowerCase())})]`, document, null, XPathResult.ORDERED_NODE_SNAPSHOT_TYPE, null);
-    if (xpath.snapshotLength > 0) {
-      return xpath.snapshotItem(0);
     }
   }
   return null;
 }
 
-async function performClick(args) {
-  const el = resolveElement(args);
-  if (!el) {
-    throw new Error('Clickable element not found.');
-  }
-  if (!isElementVisible(el)) {
-    el.scrollIntoView({ block: 'center', behavior: 'smooth' });
-    await waitFor(300);
-  }
-  const requiresConfirm = shouldConfirm(el, args.intent);
-  if (requiresConfirm) {
-    const proceed = await showConfirmModal(el, args.intent || 'important action');
-    if (!proceed) {
-      throw new Error('Action cancelled by user.');
-    }
-  }
-  el.click();
-  return { status: 'clicked', selector: getElementSelector(el) };
+function requiresConfirmation(intent) {
+  if (!intent) return false;
+  const keywords = ['checkout', 'purchase', 'submit', 'order', 'pay'];
+  return keywords.some(keyword => intent.toLowerCase().includes(keyword));
 }
 
-async function performType(args) {
-  const el = resolveElement(args);
-  if (!el) {
-    throw new Error('Input element not found.');
-  }
-  if (!(el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement || el.isContentEditable)) {
-    throw new Error('Target is not an editable field.');
-  }
-  if (!isElementVisible(el)) {
-    el.scrollIntoView({ block: 'center', behavior: 'smooth' });
-    await waitFor(200);
-  }
-  if (args.replace || !el.value) {
-    if (el.isContentEditable) {
-      el.textContent = args.value;
-    } else {
-      el.value = args.value;
-    }
-  } else {
-    if (el.isContentEditable) {
-      el.textContent += args.value;
-    } else {
-      el.value += args.value;
-    }
-  }
-  el.dispatchEvent(new Event('input', { bubbles: true }));
-  el.dispatchEvent(new Event('change', { bubbles: true }));
-  return { status: 'typed', valueLength: args.value.length };
-}
-
-async function performScroll(args) {
-  if (args.position === 'top') {
-    window.scrollTo({ top: 0, behavior: 'smooth' });
-    return { status: 'scrolled', position: 'top' };
-  }
-  if (args.position === 'bottom') {
-    window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
-    return { status: 'scrolled', position: 'bottom' };
-  }
-  const el = resolveElement(args);
-  if (el) {
-    el.scrollIntoView({ block: 'center', behavior: 'smooth' });
-    return { status: 'scrolled', selector: getElementSelector(el) };
-  }
-  return { status: 'noop' };
-}
-
-function isElementVisible(el) {
-  const rect = el.getBoundingClientRect();
-  return rect.width > 0 && rect.height > 0 && rect.bottom >= 0 && rect.top <= (window.innerHeight || document.documentElement.clientHeight);
-}
-
-function shouldConfirm(el, intent) {
-  if (intent && /(purchase|checkout|submit|confirm)/i.test(intent)) {
-    return true;
-  }
-  const text = (el.innerText || el.value || '').toLowerCase();
-  return /(buy|checkout|submit|order|cart)/.test(text);
-}
-
-function showConfirmModal(element, intent) {
+function confirmStep(intentText) {
   return new Promise(resolve => {
-    const overlay = document.createElement('div');
-    overlay.className = 'awa-confirm-overlay';
-    overlay.innerHTML = `
-      <div class="awa-confirm-dialog" role="dialog" aria-modal="true">
-        <h2 dir="auto">Confirm Step</h2>
-        <p dir="auto">The assistant wants to ${intent}. Do you approve?</p>
-        <div class="awa-confirm-actions">
-          <button class="awa-confirm-approve">Proceed</button>
-          <button class="awa-confirm-cancel">Cancel</button>
+    const modal = document.createElement('div');
+    modal.className = 'hawa-confirm-modal';
+    modal.innerHTML = `
+      <div class="hawa-confirm-dialog" role="dialog" aria-modal="true">
+        <h2>Confirm action</h2>
+        <p>${escapeHtml(intentText)}</p>
+        <div class="hawa-confirm-actions">
+          <button type="button" data-action="cancel">Cancel</button>
+          <button type="button" data-action="confirm">Proceed</button>
         </div>
-      </div>
-    `;
-    document.body.appendChild(overlay);
-    const cleanup = () => {
-      overlay.remove();
+      </div>`;
+    document.body.appendChild(modal);
+    const handler = (event) => {
+      const action = event.target?.dataset?.action;
+      if (!action) return;
+      event.preventDefault();
+      modal.remove();
+      resolve(action === 'confirm');
+      modal.removeEventListener('click', handler);
     };
-    overlay.querySelector('.awa-confirm-approve').addEventListener('click', () => {
-      cleanup();
-      resolve(true);
-    });
-    overlay.querySelector('.awa-confirm-cancel').addEventListener('click', () => {
-      cleanup();
-      resolve(false);
-    });
+    modal.addEventListener('click', handler);
   });
 }
 
-function waitFor(ms) {
-  return new Promise(resolve => setTimeout(resolve, ms));
+function showAgentOverlay(sessionId) {
+  agentActive = true;
+  agentSessionId = sessionId;
+  if (agentOverlay) return;
+  agentOverlay = document.createElement('div');
+  agentOverlay.className = 'hawa-agent-overlay';
+  agentOverlay.innerHTML = `
+    <div class="hawa-agent-frame" role="status" aria-live="polite">
+      <div class="hawa-agent-header">
+        <span class="hawa-agent-name">HAWA Agent</span>
+        <button type="button" class="hawa-agent-stop" title="Stop agent" aria-label="Stop agent">E STOP</button>
+      </div>
+      <div class="hawa-agent-status" data-status>Preparing instructions…</div>
+    </div>`;
+  document.documentElement.appendChild(agentOverlay);
+  agentOverlay.querySelector('.hawa-agent-stop').addEventListener('click', () => {
+    chrome.runtime.sendMessage({ type: 'agent-stop-request', sessionId: agentSessionId });
+  });
 }
 
-function getElementSelector(el) {
-  if (!(el instanceof Element)) return '';
-  if (el.id) return `#${el.id}`;
-  const path = [];
-  while (el && el.nodeType === Node.ELEMENT_NODE && path.length < 5) {
-    let selector = el.nodeName.toLowerCase();
-    if (el.className) {
-      const classes = Array.from(el.classList).slice(0, 3);
-      if (classes.length) selector += '.' + classes.join('.');
-    }
-    path.unshift(selector);
-    el = el.parentElement;
+function hideAgentOverlay() {
+  agentActive = false;
+  agentSessionId = null;
+  if (agentOverlay) {
+    agentOverlay.remove();
+    agentOverlay = null;
   }
-  return path.join(' > ');
 }
 
-function renderTopbar(summary) {
-  if (!topbarFrame) {
-    topbarFrame = document.createElement('iframe');
-    topbarFrame.src = chrome.runtime.getURL('topbar.html');
-    topbarFrame.style.position = 'fixed';
-    topbarFrame.style.top = '0';
-    topbarFrame.style.left = '0';
-    topbarFrame.style.right = '0';
-    topbarFrame.style.height = '64px';
-    topbarFrame.style.zIndex = '2147483646';
-    topbarFrame.style.border = 'none';
-    topbarFrame.style.boxShadow = '0 2px 6px rgba(0,0,0,0.2)';
-    document.documentElement.appendChild(topbarFrame);
-    document.documentElement.style.setProperty('--awa-topbar-offset', '64px');
-    document.documentElement.style.scrollMarginTop = '64px';
-  }
-  topbarFrame.contentWindow?.postMessage({ type: 'awa-topbar-update', summary }, '*');
+function injectTopbar(summary) {
+  if (document.getElementById('hawa-topbar')) return;
+  fetch(chrome.runtime.getURL('topbar.html')).then(res => res.text()).then(html => {
+    const container = document.createElement('div');
+    container.innerHTML = html;
+    const topbar = container.firstElementChild;
+    topbar.id = 'hawa-topbar';
+    document.body.appendChild(topbar);
+    const shadow = topbar.attachShadow({ mode: 'open' });
+    Promise.all([
+      fetch(chrome.runtime.getURL('topbar.css')).then(r => r.text()),
+      fetch(chrome.runtime.getURL('topbar.js')).then(r => r.text())
+    ]).then(([cssText, jsText]) => {
+      const style = document.createElement('style');
+      style.textContent = cssText;
+      shadow.appendChild(style);
+      const content = document.createElement('div');
+      content.innerHTML = summary;
+      shadow.appendChild(content);
+      const script = document.createElement('script');
+      script.textContent = jsText;
+      shadow.appendChild(script);
+    });
+  }).catch(error => console.error('HAWA topbar injection failed', error));
 }
 
-window.addEventListener('message', event => {
-  if (event.data?.type === 'awa-topbar-close') {
-    if (topbarFrame) {
-      topbarFrame.remove();
-      topbarFrame = null;
-      document.documentElement.style.removeProperty('--awa-topbar-offset');
-      document.documentElement.style.scrollMarginTop = '';
-    }
-  }
-});
+function collapseWhitespace(value) {
+  return (value || '').replace(/\s+/g, ' ').trim();
+}
 
-const style = document.createElement('style');
-style.textContent = `
-  .awa-confirm-overlay {
-    position: fixed;
-    inset: 0;
-    background: rgba(0,0,0,0.5);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    z-index: 2147483645;
-  }
-  .awa-confirm-dialog {
-    background: #fff;
-    padding: 20px;
-    max-width: 360px;
-    border-radius: 8px;
-    box-shadow: 0 6px 24px rgba(0,0,0,0.2);
-    font-family: system-ui, sans-serif;
-    text-align: start;
-  }
-  .awa-confirm-dialog h2 {
-    margin-top: 0;
-  }
-  .awa-confirm-actions {
-    display: flex;
-    gap: 12px;
-    justify-content: flex-end;
-    margin-top: 20px;
-  }
-  .awa-confirm-actions button {
-    border: none;
-    border-radius: 4px;
-    padding: 8px 14px;
-    cursor: pointer;
-    font-weight: 600;
-  }
-  .awa-confirm-approve {
-    background: #1a73e8;
-    color: white;
-  }
-  .awa-confirm-cancel {
-    background: #f1f3f4;
-    color: #202124;
-  }
+function escapeHtml(value) {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+const confirmStyles = document.createElement('style');
+confirmStyles.textContent = `
+.hawa-confirm-modal { position: fixed; inset: 0; background: rgba(12, 12, 14, 0.55); backdrop-filter: blur(4px); display: grid; place-items: center; z-index: 2147483647; font-family: 'Segoe UI', system-ui, sans-serif; }
+.hawa-confirm-dialog { width: min(320px, calc(100% - 2rem)); background: color-mix(in srgb, var(--ha-surface, #101015) 85%, transparent); padding: 1.25rem; border-radius: 16px; box-shadow: 0 24px 48px rgba(0,0,0,0.35); color: var(--ha-foreground, #f5f6fb); border: 1px solid rgba(255,255,255,0.08); }
+.hawa-confirm-dialog h2 { margin: 0 0 0.5rem; font-size: 1.1rem; }
+.hawa-confirm-dialog p { margin: 0 0 1rem; font-size: 0.95rem; opacity: 0.85; }
+.hawa-confirm-actions { display: flex; gap: 0.75rem; justify-content: flex-end; }
+.hawa-confirm-actions button { padding: 0.45rem 0.9rem; border-radius: 999px; border: none; font-weight: 600; cursor: pointer; }
+.hawa-confirm-actions [data-action="cancel"] { background: rgba(255,255,255,0.08); color: inherit; }
+.hawa-confirm-actions [data-action="confirm"] { background: linear-gradient(135deg, #6750ff, #b388ff); color: white; }
+.hawa-agent-overlay { position: fixed; inset: 0; pointer-events: none; background: radial-gradient(circle at top left, rgba(143, 129, 255, 0.2), transparent 55%), radial-gradient(circle at bottom right, rgba(90, 248, 255, 0.18), transparent 60%); backdrop-filter: blur(2px); z-index: 2147483600; animation: hawaPulse 6s ease-in-out infinite; }
+.hawa-agent-frame { position: absolute; top: 24px; left: 24px; padding: 1rem; border-radius: 18px; background: rgba(16, 15, 35, 0.65); border: 1px solid rgba(149, 128, 255, 0.45); color: #f4f3ff; min-width: 220px; pointer-events: auto; box-shadow: 0 18px 36px rgba(48, 32, 128, 0.4); }
+.hawa-agent-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.5rem; gap: 0.75rem; }
+.hawa-agent-name { font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; font-size: 0.8rem; opacity: 0.9; }
+.hawa-agent-stop { border: none; border-radius: 999px; padding: 0.35rem 0.85rem; background: #ff2f4c; color: white; font-weight: 700; cursor: pointer; letter-spacing: 0.08em; box-shadow: 0 6px 16px rgba(255, 47, 76, 0.45); }
+.hawa-agent-status { font-size: 0.85rem; opacity: 0.8; }
+@keyframes hawaPulse { 0%, 100% { opacity: 0.65; } 50% { opacity: 1; } }
+@media (prefers-color-scheme: light) {
+  .hawa-confirm-modal { background: rgba(248, 248, 252, 0.55); }
+  .hawa-confirm-dialog { background: rgba(255, 255, 255, 0.95); color: #1b1b21; border-color: rgba(103, 80, 255, 0.2); }
+  .hawa-confirm-actions [data-action="cancel"] { background: rgba(103, 80, 255, 0.08); color: #1b1b21; }
+  .hawa-agent-overlay { background: radial-gradient(circle at top left, rgba(103, 80, 255, 0.14), transparent 50%), radial-gradient(circle at bottom right, rgba(0, 180, 216, 0.12), transparent 55%); }
+  .hawa-agent-frame { background: rgba(248, 246, 255, 0.92); color: #1d1735; border-color: rgba(103, 80, 255, 0.35); }
+  .hawa-agent-stop { box-shadow: 0 6px 16px rgba(255, 47, 76, 0.35); }
+}
 `;
-document.documentElement.appendChild(style);
+document.documentElement.appendChild(confirmStyles);
