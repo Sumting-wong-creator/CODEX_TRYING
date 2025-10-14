@@ -232,16 +232,12 @@ async function callGemini({ session, apiKey, contents, allowInstructions }) {
   const payload = buildPayload(contents, allowInstructions);
 
   try {
-    return await new Promise((resolve, reject) => {
-      streamGemini({
-        apiKey,
-        payload,
-        model: DEFAULT_GEMINI_MODEL,
-        signal: session.controller.signal,
-        onToken: (token) => port.postMessage({ type: 'token', conversationId: session.conversationId, token }),
-        onComplete: resolve,
-        onError: reject
-      });
+    return await streamGemini({
+      apiKey,
+      payload,
+      model: DEFAULT_GEMINI_MODEL,
+      signal: session.controller.signal,
+      onToken: (token) => port.postMessage({ type: 'token', conversationId: session.conversationId, token })
     });
   } catch (error) {
     if (error?.name === 'AbortError') {
@@ -497,6 +493,11 @@ function sendToContent(tabId, message) {
 }
 
 async function getApiKey() {
+  const runtimeKey = getRuntimeEnvKey();
+  if (runtimeKey) {
+    return runtimeKey;
+  }
+
   const { envVars, apiKeyData, apiKeyCache } = await chrome.storage.local.get(['envVars', 'apiKeyData', 'apiKeyCache']);
   if (envVars?.GEMINI_API_KEY) {
     return envVars.GEMINI_API_KEY;
@@ -546,6 +547,26 @@ async function clearGeminiKey() {
     }
   }
   await chrome.storage.local.remove('apiKeyCache');
+}
+
+function getRuntimeEnvKey() {
+  try {
+    if (typeof globalThis !== 'undefined' && typeof globalThis.GEMINI_API_KEY === 'string' && globalThis.GEMINI_API_KEY.trim()) {
+      return globalThis.GEMINI_API_KEY.trim();
+    }
+  } catch (error) {
+    console.warn('[HAWA] Unable to read GEMINI_API_KEY from global scope', error);
+  }
+
+  try {
+    // In development or testing contexts Node-style process.env may exist.
+    if (typeof process !== 'undefined' && process?.env?.GEMINI_API_KEY) {
+      return String(process.env.GEMINI_API_KEY).trim();
+    }
+  } catch (_error) {
+    // ignore
+  }
+  return null;
 }
 
 async function verifyGeminiKey(apiKey) {
