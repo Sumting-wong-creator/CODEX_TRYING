@@ -174,6 +174,12 @@ async function startGeminiRequest(originTabId, port, request) {
   stopActiveStream(originTabId, { skipNotify: true });
 
   const mode = request.mode === 'agent' ? 'agent' : 'ask';
+  console.debug('[HAWA][bg] start request', { originTabId, mode, conversationId: request.conversationId });
+  port.postMessage({
+    type: 'status',
+    status: 'progress',
+    message: mode === 'agent' ? 'HAWA is preparing an agent workspace…' : 'HAWA is reaching out to Gemini…'
+  });
   let targetTabId = originTabId;
   if (mode === 'agent') {
     try {
@@ -210,13 +216,16 @@ async function startGeminiRequest(originTabId, port, request) {
       signal: controller.signal,
       model,
       onToken: token => {
+        console.debug('[HAWA][bg] token received', token);
         port.postMessage({ type: 'token', conversationId: request.conversationId, token });
       },
       onTool: async toolCall => {
+        console.debug('[HAWA][bg] tool call', toolCall);
         const handled = await handleToolCall(targetTabId, port, toolCall);
         return handled;
       },
       onEnd: finalData => {
+        console.debug('[HAWA][bg] stream complete');
         port.postMessage({ type: 'complete', conversationId: request.conversationId, finalData });
         cleanupSession(targetTabId);
       },
@@ -442,6 +451,7 @@ function buildGeminiPayload(request) {
 async function handleToolCall(tabId, port, toolCall) {
   try {
     const { name, args } = normalizeToolCall(toolCall);
+    console.debug('[HAWA][bg] normalised tool call', name, args);
     if (!TOOL_WHITELIST.has(name)) {
       port.postMessage({ type: 'status', status: 'warning', message: `Blocked unsupported tool: ${name}` });
       notify('unsupported-tool', `Blocked unsupported tool: ${name}`);
@@ -494,9 +504,11 @@ async function handleToolCall(tabId, port, toolCall) {
     });
 
     const result = await resultPromise;
+    console.debug('[HAWA][bg] tool result', name, result);
     port.postMessage({ type: 'status', status: 'info', message: `${name} executed.` });
     return { ok: true, result };
   } catch (error) {
+    console.error('[HAWA][bg] tool call failed', error);
     port.postMessage({ type: 'status', status: 'error', message: `Tool error: ${error.message}` });
     return { error: error.message };
   }

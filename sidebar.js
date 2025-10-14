@@ -87,6 +87,7 @@ quickActionButtons.forEach(button => {
 
 port.onMessage.addListener(message => {
   if (!message) return;
+  console.debug('[HAWA][sidebar] message', message);
   switch (message.type) {
     case 'token':
       if (message.conversationId !== conversationId) return;
@@ -106,10 +107,12 @@ port.onMessage.addListener(message => {
       sendBtn.disabled = !promptEl.value.trim();
       break;
     case 'status':
-      renderSystemMessage(message.message, message.status);
-      streaming = false;
-      stopBtn.disabled = true;
-      sendBtn.disabled = !promptEl.value.trim();
+      renderSystemMessage(message.message, message.status === 'progress' ? 'info' : message.status);
+      if (message.status !== 'progress') {
+        streaming = false;
+        stopBtn.disabled = true;
+        sendBtn.disabled = !promptEl.value.trim();
+      }
       break;
     case 'tool-response':
       if (message.tool === 'readPage') {
@@ -147,6 +150,7 @@ function sendPrompt(prompt) {
   assistantBuffer = '';
   currentAssistantNode = appendMessage('assistant', '');
   streaming = true;
+  console.debug('[HAWA][sidebar] sending prompt', { mode: currentMode, conversationId, historyCount: history.length });
   stopBtn.disabled = false;
   sendBtn.disabled = true;
   const context = history.map(item => ({ ...item }));
@@ -175,6 +179,8 @@ function finalizeAssistantMessage(finalData) {
     const fallback = extractCandidateText(finalData);
     if (fallback) {
       assistantBuffer = fallback;
+    } else if (finalData?.finishReason === 'SAFETY') {
+      assistantBuffer = 'Gemini blocked this reply for safety. Try rephrasing or adjusting the request.';
     }
   }
   const finalText = assistantBuffer;
