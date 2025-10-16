@@ -1,0 +1,68 @@
+:root {
+  color-scheme: light dark;
+  font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+}
+
+body {
+  margin: 0;
+  min-width: 240px;
+  background: var(--popup-surface);
+  color: var(--popup-foreground);
+}
+
+.popup-shell {
+  padding: 1.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  text-align: center;
+}
+
+h1 {
+  margin: 0;
+  font-size: 1.25rem;
+  letter-spacing: 0.08em;
+}
+
+p {
+  margin: 0;
+  opacity: 0.75;
+  font-size: 0.85rem;
+}
+
+.actions {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+button {
+  border: none;
+  border-radius: 999px;
+  padding: 0.55rem 1rem;
+  font-weight: 600;
+  cursor: pointer;
+  background: linear-gradient(120deg, var(--popup-accent), var(--popup-accent-soft));
+  color: #fff;
+  box-shadow: 0 12px 24px rgba(103, 80, 255, 0.35);
+}
+
+small {
+  opacity: 0.6;
+}
+
+:root {
+  --popup-surface: #0f111b;
+  --popup-foreground: #f5f6fb;
+  --popup-accent: #6750ff;
+  --popup-accent-soft: #56c9ff;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    --popup-surface: #f7f4ff;
+    --popup-foreground: #1d1735;
+    --popup-accent: #6750ff;
+    --popup-accent-soft: #6ad7ff;
+  }
+}

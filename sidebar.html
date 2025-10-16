@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>HAWA</title>
+    <link rel="stylesheet" href="sidebar.css" />
+  </head>
+  <body>
+    <div id="sidebar" class="hawa-shell">
+      <header class="hawa-header" role="banner">
+        <div class="hawa-title-group">
+          <span class="hawa-pill">HAWA</span>
+          <span class="hawa-subtitle">Hyper Agentic Web Assistant</span>
+        </div>
+        <button class="hawa-reset" type="button" aria-label="Start a new chat">New chat</button>
+      </header>
+
+      <section class="hawa-modes" aria-label="Mode selector">
+        <button class="mode-btn active" data-mode="ask" aria-pressed="true">
+          <span class="mode-label">Ask</span>
+          <span class="mode-caption">Chat about this page</span>
+        </button>
+        <button class="mode-btn" data-mode="agent" aria-pressed="false">
+          <span class="mode-label">Agent</span>
+          <span class="mode-caption">Open a task tab</span>
+        </button>
+      </section>
+
+      <section class="hawa-quick" aria-label="Quick actions">
+        <button class="hawa-quick-btn" data-action="summarize">Summarize</button>
+        <label class="hawa-toggle">
+          <input type="checkbox" id="allowInstructions" />
+          <span>Allow page instructions</span>
+        </label>
+      </section>
+
+      <main class="hawa-chat" aria-live="polite">
+        <div class="hawa-log" id="chatLog"></div>
+      </main>
+
+      <footer class="hawa-composer" role="form">
+        <form id="composerForm">
+          <label class="hawa-input" aria-label="Ask HAWA">
+            <textarea id="composerInput" rows="1" required autocomplete="off" placeholder="Ask HAWA…"></textarea>
+          </label>
+          <button type="submit" class="send-btn" aria-label="Send to HAWA">Send</button>
+        </form>
+      </footer>
+    </div>
+    <script src="vendor/highlight.min.js"></script>
+    <script type="module" src="sidebar.js"></script>
+  </body>
+</html>

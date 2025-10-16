@@ -1,0 +1,130 @@
+:root {
+  color-scheme: light dark;
+  font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+}
+
+body {
+  margin: 0;
+  background: var(--options-surface);
+  color: var(--options-foreground);
+}
+
+.options-shell {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 2rem 1.5rem 3rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+header h1 {
+  margin: 0 0 0.5rem;
+  font-size: 1.75rem;
+}
+
+header p {
+  margin: 0;
+  opacity: 0.75;
+}
+
+.card {
+  background: var(--options-panel);
+  padding: 1.5rem;
+  border-radius: 20px;
+  box-shadow: 0 24px 48px rgba(16, 16, 40, 0.2);
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.card h2 {
+  margin: 0;
+  font-size: 1.2rem;
+}
+
+label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  font-size: 0.9rem;
+}
+
+label span {
+  opacity: 0.7;
+}
+
+input[type='password'],
+textarea {
+  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  background: rgba(12, 12, 20, 0.55);
+  padding: 0.75rem 1rem;
+  color: inherit;
+  font: inherit;
+}
+
+textarea {
+  resize: vertical;
+}
+
+.toggle {
+  flex-direction: row;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+
+button {
+  border: none;
+  border-radius: 999px;
+  padding: 0.6rem 1.2rem;
+  font-weight: 600;
+  cursor: pointer;
+  background: linear-gradient(120deg, var(--options-accent), var(--options-accent-soft));
+  color: #fff;
+  box-shadow: 0 12px 26px rgba(103, 80, 255, 0.35);
+}
+
+.status {
+  font-size: 0.85rem;
+  opacity: 0.75;
+}
+
+code {
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  background: rgba(255, 255, 255, 0.08);
+  padding: 0.15rem 0.35rem;
+  border-radius: 6px;
+}
+
+:root {
+  --options-surface: #0f111b;
+  --options-foreground: #f4f6fb;
+  --options-panel: rgba(20, 22, 35, 0.9);
+  --options-accent: #6750ff;
+  --options-accent-soft: #56c9ff;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    --options-surface: #f7f4ff;
+    --options-foreground: #1d1735;
+    --options-panel: rgba(255, 255, 255, 0.9);
+    --options-accent: #6750ff;
+    --options-accent-soft: #6ad7ff;
+  }
+  input[type='password'],
+  textarea {
+    background: rgba(255, 255, 255, 0.95);
+    border-color: rgba(103, 80, 255, 0.2);
+  }
+  code {
+    background: rgba(103, 80, 255, 0.12);
+  }
+}
